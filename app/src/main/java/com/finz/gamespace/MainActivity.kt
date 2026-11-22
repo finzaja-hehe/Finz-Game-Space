@@ -1,28 +1,21 @@
 package com.finz.gamespace
 
-import android.app.ActivityManager
 import android.app.NotificationManager
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.ActivityInfo
-import android.content.pm.ApplicationInfo
 import android.content.pm.ResolveInfo
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
-import android.os.BatteryManager
 import android.os.Bundle
 import android.provider.Settings
-import android.text.TextUtils
-import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
-import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.ScrollView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 
 class MainActivity : BaseUi() {
 
@@ -37,47 +30,17 @@ class MainActivity : BaseUi() {
         window.navigationBarColor = bg
         themeIndex = getSharedPreferences("gs", Context.MODE_PRIVATE)
             .getInt("theme", 0).coerceIn(0, 3)
-        try {
-            loadGames()
-        } catch (e: Throwable) {
-            games = emptyList()
-        }
     }
 
     override fun onResume() {
         super.onResume()
-        try {
-            val nm = getSystemService(NotificationManager::class.java)
-            focusOn = nm.currentInterruptionFilter == NotificationManager.INTERRUPTION_FILTER_NONE
-            buildUi()
-        } catch (e: Throwable) {
-            showError(e)
-        }
-    }
-
-    private fun showError(e: Throwable) {
-        val t = tv("ERROR:\n" + Log.getStackTraceString(e).take(1800), 11f, Color.WHITE)
-        t.setPadding(dp(16), dp(16), dp(16), dp(16))
-        val sv = ScrollView(this)
-        sv.setBackgroundColor(bg)
-        sv.addView(t)
-        setContentView(sv)
-    }
-
-    private fun loadGames() {
-        val pm = packageManager
-        val launcher = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
-        val all = pm.queryIntentActivities(launcher, 0)
-            .filter { it.activityInfo.packageName != packageName }
-        val g = all.filter {
-            it.activityInfo.applicationInfo.category == ApplicationInfo.CATEGORY_GAME
-        }
-        games = (if (g.isEmpty()) all else g)
-            .sortedBy { it.loadLabel(pm).toString().lowercase() }
+        val nm = getSystemService(NotificationManager::class.java)
+        focusOn = nm.currentInterruptionFilter == NotificationManager.INTERRUPTION_FILTER_NONE
+        games = GameStore.saved(this)
+        buildUi()
     }
 
     private fun buildUi() {
-        val pm = packageManager
         if (pick >= games.size) pick = 0
 
         val root = LinearLayout(this).apply {
@@ -87,34 +50,6 @@ class MainActivity : BaseUi() {
                 intArrayOf(bg, mix(accent, 0.18f), bg)
             )
         }
-
-        val side = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-            setBackgroundColor(0x33000000)
-            setPadding(dp(12), dp(16), dp(12), dp(16))
-        }
-        val logo = tv("F", 20f, Color.BLACK, true).apply {
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(accent)
-            }
-        }
-        side.addView(logo, lp(dp(44), dp(44)))
-        side.addView(View(this), LinearLayout.LayoutParams(1, 0, 1f))
-        val focusBtn = tv(
-            if (focusOn) "ON" else "DND", 11f,
-            if (focusOn) Color.BLACK else Color.WHITE, true
-        ).apply {
-            gravity = Gravity.CENTER
-            background = box(if (focusOn) accent else panel, 22)
-            setOnClickListener { toggleFocus() }
-        }
-        side.addView(focusBtn, lp(dp(44), dp(44)))
-        side.addView(tv("Fokus", 9f, muted).apply { gravity = Gravity.CENTER },
-            lp(WRAP, WRAP, t = 4))
-
         val main = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(14), dp(20), dp(12))
@@ -139,78 +74,44 @@ class MainActivity : BaseUi() {
             orientation = LinearLayout.HORIZONTAL
             setPadding(0, dp(4), 0, dp(4))
         }
-        games.forEachIndexed { i, g -> row.addView(gameCard(i, g), lp(dp(150), MATCH, r = 12)) }
+        games.forEachIndexed { i, g ->
+            row.addView(gameCard(g, i == pick) { pick = i; buildUi() },
+                lp(dp(160), MATCH, r = 12))
+        }
+        row.addView(addCard { showPicker() }, lp(dp(160), MATCH, r = 12))
         scroll.addView(row, FrameLayout.LayoutParams(WRAP, MATCH))
         main.addView(scroll, LinearLayout.LayoutParams(MATCH, 0, 1f).apply {
             topMargin = dp(10)
             bottomMargin = dp(10)
         })
 
-        val am = getSystemService(ActivityManager::class.java)
-        val mi = ActivityManager.MemoryInfo()
-        am.getMemoryInfo(mi)
-        val total = mi.totalMem / 1048576
-        val used = total - mi.availMem / 1048576
-        val ramPct = (used * 100 / total).toInt()
-        val bi = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val temp = (bi?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
-        val level = bi?.getIntExtra(BatteryManager.EXTRA_LEVEL, 0) ?: 0
-        val scale = bi?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
-        val bat = level * 100 / scale
-        val name = games.getOrNull(pick)?.loadLabel(pm)?.toString() ?: "-"
+        val name = games.getOrNull(pick)?.loadLabel(packageManager)?.toString() ?: "-"
+        main.addView(statsBar(name) { launchGame() }, lp(MATCH, WRAP))
 
-        val bottom = LinearLayout(this).apply {
-            gravity = Gravity.CENTER_VERTICAL
-            background = box(panel, 16)
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-        }
-        val w1 = { LinearLayout.LayoutParams(0, WRAP, 1f) }
-        bottom.addView(stat("GAME", name), LinearLayout.LayoutParams(0, WRAP, 1.6f))
-        bottom.addView(stat("SUHU", "%.1f°C".format(temp)), w1())
-        bottom.addView(stat("RAM", "$ramPct%"), w1())
-        bottom.addView(stat("BATERAI", "$bat%"), w1())
-        bottom.addView(stat("CPU", "${Runtime.getRuntime().availableProcessors()} core"), w1())
-        val launch = tv("▶  MAIN", 14f, Color.BLACK, true).apply {
-            gravity = Gravity.CENTER
-            background = box(accent, 14)
-            setPadding(dp(22), dp(12), dp(22), dp(12))
-            setOnClickListener { launchGame() }
-        }
-        bottom.addView(launch, lp(WRAP, WRAP, l = 8))
-        main.addView(bottom, lp(MATCH, WRAP))
-
-        root.addView(side, LinearLayout.LayoutParams(WRAP, MATCH))
+        root.addView(sideBar(focusOn) { toggleFocus() }, LinearLayout.LayoutParams(WRAP, MATCH))
         root.addView(main, LinearLayout.LayoutParams(0, MATCH, 1f))
         setContentView(root)
     }
 
-    private fun gameCard(i: Int, g: ResolveInfo): View {
+    private fun showPicker() {
         val pm = packageManager
-        val on = i == pick
-        val card = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(mix(accent, if (on) 0.35f else 0.12f), panel)
-            ).apply {
-                cornerRadius = dp(18).toFloat()
-                setStroke(dp(if (on) 2 else 1), if (on) accent else 0xFF262B36.toInt())
-            }
-            setPadding(dp(10), dp(10), dp(10), dp(10))
-            setOnClickListener {
-                pick = i
+        val all = GameStore.allApps(this)
+        val current = games.map { it.activityInfo.packageName }.toSet()
+        val names = all.map { it.loadLabel(pm).toString() }.toTypedArray()
+        val checked = BooleanArray(all.size) { current.contains(all[it].activityInfo.packageName) }
+        AlertDialog.Builder(this)
+            .setTitle("Pilih game")
+            .setMultiChoiceItems(names, checked) { _, i, c -> checked[i] = c }
+            .setPositiveButton("Simpan") { _, _ ->
+                val picked = all.filterIndexed { i, _ -> checked[i] }
+                    .map { it.activityInfo.packageName }
+                GameStore.save(this, picked)
+                games = GameStore.saved(this)
+                pick = 0
                 buildUi()
             }
-        }
-        card.addView(ImageView(this).apply { setImageDrawable(g.loadIcon(pm)) },
-            lp(dp(72), dp(72)))
-        card.addView(tv(g.loadLabel(pm).toString(), 13f, Color.WHITE, true).apply {
-            gravity = Gravity.CENTER
-            maxLines = 2
-            ellipsize = TextUtils.TruncateAt.END
-        }, lp(MATCH, WRAP, t = 10))
-        return card
+            .setNegativeButton("Batal", null)
+            .show()
     }
 
     private fun changeTheme(i: Int) {
@@ -220,7 +121,11 @@ class MainActivity : BaseUi() {
     }
 
     private fun launchGame() {
-        val g = games.getOrNull(pick) ?: return
+        val g = games.getOrNull(pick)
+        if (g == null) {
+            Toast.makeText(this, "Tambah game dulu lewat kartu +", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (!Settings.canDrawOverlays(this)) {
             Toast.makeText(this, "Izinkan 'Tampil di atas aplikasi lain', lalu tekan MAIN lagi",
                 Toast.LENGTH_LONG).show()
