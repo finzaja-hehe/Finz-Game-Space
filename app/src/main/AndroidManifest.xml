@@ -3,6 +3,7 @@
 
     <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     <uses-permission android:name="android.permission.WRITE_SETTINGS" />
+    <uses-permission android:name="android.permission.KILL_BACKGROUND_PROCESSES" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
 
@@ -26,11 +27,28 @@
             </intent-filter>
         </activity>
         <activity
+            android:name=".CrosshairActivity"
+            android:exported="true"
+            android:label="Finz Crosshair">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+        <activity
             android:name=".CrashActivity"
             android:exported="false"
             android:process=":crash" />
         <service
             android:name=".OverlayService"
+            android:exported="false"
+            android:foregroundServiceType="specialUse">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="game_overlay" />
+        </service>
+        <service
+            android:name=".CrosshairService"
             android:exported="false"
             android:foregroundServiceType="specialUse">
             <property
