@@ -14,6 +14,7 @@
     </queries>
 
     <application
+        android:name=".GameApp"
         android:label="Finz Game Space"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
         <activity
@@ -24,6 +25,10 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+        <activity
+            android:name=".CrashActivity"
+            android:exported="false"
+            android:process=":crash" />
         <service
             android:name=".OverlayService"
             android:exported="false"
