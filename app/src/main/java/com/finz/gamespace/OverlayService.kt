@@ -1,21 +1,14 @@
 package com.finz.gamespace
 
-import android.app.ActivityManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.ServiceInfo
-import android.content.res.ColorStateList
 import android.graphics.Color
-import android.graphics.PixelFormat
-import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.media.AudioManager
-import android.net.Uri
-import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -26,7 +19,6 @@ import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.LinearLayout
-import android.widget.SeekBar
 import android.widget.TextView
 import android.widget.Toast
 import java.text.SimpleDateFormat
@@ -37,23 +29,19 @@ import kotlin.math.abs
 class OverlayService : Service() {
 
     private lateinit var wm: WindowManager
+    private lateinit var kit: OverlayKit
+    private lateinit var act: OverlayActions
+    private lateinit var cross: CrosshairPanel
     private val handler = Handler(Looper.getMainLooper())
     private var bubble: View? = null
+    private var bubbleLp: WindowManager.LayoutParams? = null
     private var panel: View? = null
-    private var ramTv: TextView? = null
-    private var tempTv: TextView? = null
-    private var batTv: TextView? = null
-    private var timeTv: TextView? = null
-    private var dndTv: TextView? = null
-
-    private val themes = intArrayOf(
-        0xFFFF7A1A.toInt(), 0xFF2D9CFF.toInt(),
-        0xFFFF3B47.toInt(), 0xFF22E58B.toInt()
-    )
-    private val accent: Int
-        get() = themes[getSharedPreferences("gs", MODE_PRIVATE).getInt("theme", 0).coerceIn(0, 3)]
-    private val muted = 0xFF8B93A1.toInt()
-    private val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
+    private var panelLp: WindowManager.LayoutParams? = null
+    private val vals = HashMap<String, TextView>()
+    private var dndBtn: TextView? = null
+    private var keepBtn: TextView? = null
+    private var crossBtn: TextView? = null
+    private var keepOn = false
 
     private val tick = object : Runnable {
         override fun run() {
@@ -67,14 +55,19 @@ class OverlayService : Service() {
     override fun onCreate() {
         super.onCreate()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
+        kit = OverlayKit(this)
+        act = OverlayActions(this, handler)
+        cross = CrosshairPanel(this, wm, kit) { bubble?.visibility = View.VISIBLE }
         startFg()
         showBubble()
+        cross.restore()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     override fun onDestroy() {
         handler.removeCallbacks(tick)
+        cross.destroy()
         try { panel?.let { wm.removeView(it) } } catch (e: Exception) {}
         try { bubble?.let { wm.removeView(it) } } catch (e: Exception) {}
         super.onDestroy()
@@ -97,55 +90,33 @@ class OverlayService : Service() {
         }
     }
 
-    // ---------- helper ----------
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-
-    private fun lp(w: Int, h: Int, x: Int, y: Int, g: Int) = WindowManager.LayoutParams(
-        w, h,
-        WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-        WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
-        PixelFormat.TRANSLUCENT
-    ).apply {
-        gravity = g
-        this.x = x
-        this.y = y
-    }
-
-    private fun text(s: String, size: Float, color: Int, bold: Boolean) =
-        TextView(this).apply {
-            text = s
-            textSize = size
-            setTextColor(color)
-            if (bold) typeface = Typeface.DEFAULT_BOLD
-        }
-
     // ---------- bubble ----------
     private fun showBubble() {
-        val size = dp(46)
-        val v = text("F", 18f, Color.BLACK, true).apply {
+        val size = kit.dp(46)
+        val v = kit.tx("F", 18f, Color.BLACK, true).apply {
             gravity = Gravity.CENTER
             alpha = 0.9f
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
-                setColor(accent)
+                setColor(kit.accent)
             }
         }
-        val p = lp(size, size, dp(8), dp(80), Gravity.TOP or Gravity.START)
+        val p = kit.lp(size, size, kit.dp(8), kit.dp(80), Gravity.TOP or Gravity.START, keepOn)
         var sx = 0
         var sy = 0
-        var tx = 0f
-        var ty = 0f
+        var tx0 = 0f
+        var ty0 = 0f
         var moved = false
         v.setOnTouchListener { _, e ->
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> {
-                    sx = p.x; sy = p.y; tx = e.rawX; ty = e.rawY; moved = false
+                    sx = p.x; sy = p.y; tx0 = e.rawX; ty0 = e.rawY; moved = false
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
-                    val dx = (e.rawX - tx).toInt()
-                    val dy = (e.rawY - ty).toInt()
-                    if (abs(dx) > dp(5) || abs(dy) > dp(5)) moved = true
+                    val dx = (e.rawX - tx0).toInt()
+                    val dy = (e.rawY - ty0).toInt()
+                    if (abs(dx) > kit.dp(5) || abs(dy) > kit.dp(5)) moved = true
                     p.x = sx + dx
                     p.y = sy + dy
                     wm.updateViewLayout(v, p)
@@ -160,61 +131,84 @@ class OverlayService : Service() {
         }
         wm.addView(v, p)
         bubble = v
+        bubbleLp = p
     }
 
     // ---------- panel ----------
     private fun openPanel() {
+        cross.hidePanel(false)
         bubble?.visibility = View.GONE
-        val acc = accent
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = GradientDrawable().apply {
-                setColor(0xEE12151C.toInt())
-                cornerRadius = dp(20).toFloat()
-                setStroke(dp(1), acc)
-            }
-            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = kit.box(0xEE12151C.toInt(), 22, kit.accent, 1)
+            setPadding(kit.dp(14), kit.dp(10), kit.dp(14), kit.dp(10))
         }
 
-        val stats = LinearLayout(this)
-        ramTv = stat(stats, "RAM")
-        tempTv = stat(stats, "SUHU")
-        batTv = stat(stats, "BATERAI")
-        timeTv = stat(stats, "JAM")
-        root.addView(stats)
+        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
+        val left = LinearLayout(this)
+        dndBtn = circle(left, "🔕", "DND") { toggleDnd() }
+        keepBtn = circle(left, "💡", "Layar On") { toggleKeep() }
+        circle(left, "🧹", "Bersihkan") { act.cleanRam() }
+        crossBtn = circle(left, "🎯", "Crosshair") {
+            closePanel()
+            cross.showPanel()
+        }
+        top.addView(left, LinearLayout.LayoutParams(kit.WRAP, kit.WRAP))
 
-        // kecerahan
-        val bright = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128)
-        root.addView(slider("☀", 255, bright) { setBrightness(it) },
-            LinearLayout.LayoutParams(-1, WRAP).apply { topMargin = dp(10) })
+        val mid = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+        }
+        val jam = kit.tx("--:--", 22f, Color.WHITE, true)
+        vals["jam"] = jam
+        mid.addView(jam)
+        val row = LinearLayout(this)
+        stat(row, "ram", "RAM")
+        stat(row, "suhu", "SUHU")
+        stat(row, "bat", "BATERAI")
+        stat(row, "net", "INTERNET")
+        mid.addView(row, LinearLayout.LayoutParams(-1, kit.WRAP))
+        top.addView(mid, LinearLayout.LayoutParams(0, kit.WRAP, 1f))
 
-        // volume
-        val am = getSystemService(AudioManager::class.java)
-        root.addView(
-            slider(
-                "🔊", am.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
-                am.getStreamVolume(AudioManager.STREAM_MUSIC)
-            ) { am.setStreamVolume(AudioManager.STREAM_MUSIC, it, 0) },
-            LinearLayout.LayoutParams(-1, WRAP).apply { topMargin = dp(4) }
-        )
-
-        // tombol
-        val nm = getSystemService(NotificationManager::class.java)
-        val dndOn = nm.currentInterruptionFilter == NotificationManager.INTERRUPTION_FILTER_NONE
-        val buttons = LinearLayout(this)
-        dndTv = pill(buttons, if (dndOn) "DND: ON" else "DND: OFF") { toggleDnd() }
-        pill(buttons, "Ke Aplikasi") {
+        val right = LinearLayout(this)
+        circle(right, "⚙", "Pengaturan") { act.openSettings() }
+        circle(right, "↩", "Aplikasi") {
             startActivity(
                 Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
         }
-        pill(buttons, "Tutup") { closePanel() }
-        pill(buttons, "Matikan") { stopSelf() }
-        root.addView(buttons, LinearLayout.LayoutParams(-1, WRAP).apply { topMargin = dp(10) })
+        circle(right, "✕", "Tutup") { closePanel() }
+        circle(right, "⏻", "Matikan") { stopSelf() }
+        top.addView(right, LinearLayout.LayoutParams(kit.WRAP, kit.WRAP))
+        root.addView(top)
 
-        val w = minOf(resources.displayMetrics.widthPixels - dp(32), dp(560))
-        wm.addView(root, lp(w, WRAP, 0, dp(8), Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        val am = getSystemService(AudioManager::class.java)
+        val bright = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128)
+        val sliders = LinearLayout(this)
+        sliders.addView(
+            kit.slider("☀", 5, 255, bright, 24) { act.setBrightness(it) },
+            LinearLayout.LayoutParams(0, kit.WRAP, 1f).apply { rightMargin = kit.dp(10) }
+        )
+        sliders.addView(
+            kit.slider(
+                "🔊", 0, am.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
+                am.getStreamVolume(AudioManager.STREAM_MUSIC), 24
+            ) { am.setStreamVolume(AudioManager.STREAM_MUSIC, it, 0) },
+            LinearLayout.LayoutParams(0, kit.WRAP, 1f).apply { leftMargin = kit.dp(10) }
+        )
+        root.addView(sliders, LinearLayout.LayoutParams(-1, kit.WRAP).apply { topMargin = kit.dp(4) })
+
+        dndBtn?.background = kit.circleBg(act.dndOn())
+        keepBtn?.background = kit.circleBg(keepOn)
+        crossBtn?.background = kit.circleBg(
+            getSharedPreferences("ch", MODE_PRIVATE).getBoolean("on", false)
+        )
+
+        val w = minOf(resources.displayMetrics.widthPixels - kit.dp(24), kit.dp(760))
+        val p = kit.lp(w, kit.WRAP, 0, kit.dp(6), Gravity.TOP or Gravity.CENTER_HORIZONTAL, keepOn)
+        wm.addView(root, p)
         panel = root
+        panelLp = p
         handler.post(tick)
     }
 
@@ -222,110 +216,66 @@ class OverlayService : Service() {
         handler.removeCallbacks(tick)
         try { panel?.let { wm.removeView(it) } } catch (e: Exception) {}
         panel = null
+        panelLp = null
         bubble?.visibility = View.VISIBLE
     }
 
-    private fun stat(parent: LinearLayout, label: String): TextView {
+    private fun circle(parent: LinearLayout, icon: String, label: String, action: () -> Unit):
+        TextView {
+        val col = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setOnClickListener { action() }
+        }
+        val c = kit.tx(icon, 16f, Color.WHITE).apply {
+            gravity = Gravity.CENTER
+            background = kit.circleBg(false)
+        }
+        col.addView(c, LinearLayout.LayoutParams(kit.dp(40), kit.dp(40)))
+        col.addView(kit.tx(label, 9f, kit.muted).apply { gravity = Gravity.CENTER })
+        parent.addView(col, LinearLayout.LayoutParams(kit.dp(58), kit.WRAP))
+        return c
+    }
+
+    private fun stat(parent: LinearLayout, key: String, label: String) {
         val col = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
         }
-        col.addView(text(label, 9f, muted, true))
-        val v = text("-", 16f, Color.WHITE, true)
+        col.addView(kit.tx(label, 8f, kit.muted, true))
+        val v = kit.tx("-", 13f, Color.WHITE, true)
+        vals[key] = v
         col.addView(v)
-        parent.addView(col, LinearLayout.LayoutParams(0, WRAP, 1f))
-        return v
-    }
-
-    private fun slider(icon: String, max: Int, now: Int, onChange: (Int) -> Unit): LinearLayout {
-        val row = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        row.addView(text(icon, 16f, Color.WHITE, false))
-        val sb = SeekBar(this).apply {
-            this.max = max
-            progress = now
-            progressTintList = ColorStateList.valueOf(accent)
-            thumbTintList = ColorStateList.valueOf(accent)
-            setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
-                    if (fromUser) onChange(p)
-                }
-                override fun onStartTrackingTouch(s: SeekBar?) {}
-                override fun onStopTrackingTouch(s: SeekBar?) {}
-            })
-        }
-        row.addView(sb, LinearLayout.LayoutParams(0, WRAP, 1f).apply { leftMargin = dp(10) })
-        return row
-    }
-
-    private fun pill(parent: LinearLayout, label: String, action: () -> Unit): TextView {
-        val t = text(label, 12f, Color.WHITE, true).apply {
-            gravity = Gravity.CENTER
-            background = GradientDrawable().apply {
-                setColor(0xFF1F2430.toInt())
-                cornerRadius = dp(14).toFloat()
-                setStroke(dp(1), accent)
-            }
-            setPadding(dp(8), dp(10), dp(8), dp(10))
-            setOnClickListener { action() }
-        }
-        parent.addView(t, LinearLayout.LayoutParams(0, WRAP, 1f).apply {
-            leftMargin = dp(3)
-            rightMargin = dp(3)
-        })
-        return t
+        parent.addView(col, LinearLayout.LayoutParams(0, kit.WRAP, 1f))
     }
 
     // ---------- aksi ----------
-    private fun setBrightness(v: Int) {
-        if (!Settings.System.canWrite(this)) {
-            Toast.makeText(this, "Izinkan ubah pengaturan sistem dulu", Toast.LENGTH_LONG).show()
-            startActivity(
-                Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:$packageName"))
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-            return
-        }
-        Settings.System.putInt(
-            contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE,
-            Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL
-        )
-        Settings.System.putInt(
-            contentResolver, Settings.System.SCREEN_BRIGHTNESS, v.coerceIn(5, 255)
-        )
+    private fun toggleDnd() {
+        dndBtn?.background = kit.circleBg(act.toggleDnd())
     }
 
-    private fun toggleDnd() {
-        val nm = getSystemService(NotificationManager::class.java)
-        if (!nm.isNotificationPolicyAccessGranted) {
-            Toast.makeText(this, "Izinkan akses Jangan Ganggu dulu", Toast.LENGTH_LONG).show()
-            startActivity(
-                Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-            return
-        }
-        val on = nm.currentInterruptionFilter == NotificationManager.INTERRUPTION_FILTER_NONE
-        nm.setInterruptionFilter(
-            if (on) NotificationManager.INTERRUPTION_FILTER_ALL
-            else NotificationManager.INTERRUPTION_FILTER_NONE
-        )
-        dndTv?.text = if (on) "DND: OFF" else "DND: ON"
+    private fun applyKeep(p: WindowManager.LayoutParams?, v: View?) {
+        if (p == null || v == null) return
+        val f = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        p.flags = if (keepOn) p.flags or f else p.flags and f.inv()
+        wm.updateViewLayout(v, p)
+    }
+
+    private fun toggleKeep() {
+        keepOn = !keepOn
+        applyKeep(bubbleLp, bubble)
+        applyKeep(panelLp, panel)
+        keepBtn?.background = kit.circleBg(keepOn)
+        Toast.makeText(
+            this, if (keepOn) "Layar tetap menyala" else "Layar normal", Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun updateStats() {
-        val am = getSystemService(ActivityManager::class.java)
-        val mi = ActivityManager.MemoryInfo()
-        am.getMemoryInfo(mi)
-        val total = mi.totalMem / 1048576
-        val used = total - mi.availMem / 1048576
-        ramTv?.text = "${used * 100 / total}%"
-
-        val bi = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
-        val temp = (bi?.getIntExtra(BatteryManager.EXTRA_TEMPERATURE, 0) ?: 0) / 10f
-        val level = bi?.getIntExtra(BatteryManager.EXTRA_LEVEL, 0) ?: 0
-        val scale = bi?.getIntExtra(BatteryManager.EXTRA_SCALE, 100) ?: 100
-        tempTv?.text = "%.1f°C".format(temp)
-        batTv?.text = "${level * 100 / scale}%"
-        timeTv?.text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+        vals["ram"]?.text = "${act.ramPct()}%"
+        vals["suhu"]?.text = "%.1f°C".format(act.tempC())
+        vals["bat"]?.text = "${act.batPct()}%"
+        vals["net"]?.text = act.netText()
+        vals["jam"]?.text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
     }
 }
