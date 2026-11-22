@@ -14,12 +14,14 @@ import android.os.BatteryManager
 import android.os.Bundle
 import android.provider.Settings
 import android.text.TextUtils
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
+import android.widget.ScrollView
 import android.widget.Toast
 
 class MainActivity : BaseUi() {
@@ -33,15 +35,33 @@ class MainActivity : BaseUi() {
         requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
         window.statusBarColor = bg
         window.navigationBarColor = bg
-        themeIndex = getSharedPreferences("gs", Context.MODE_PRIVATE).getInt("theme", 0)
-        loadGames()
+        themeIndex = getSharedPreferences("gs", Context.MODE_PRIVATE)
+            .getInt("theme", 0).coerceIn(0, 3)
+        try {
+            loadGames()
+        } catch (e: Throwable) {
+            games = emptyList()
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        val nm = getSystemService(NotificationManager::class.java)
-        focusOn = nm.currentInterruptionFilter == NotificationManager.INTERRUPTION_FILTER_NONE
-        buildUi()
+        try {
+            val nm = getSystemService(NotificationManager::class.java)
+            focusOn = nm.currentInterruptionFilter == NotificationManager.INTERRUPTION_FILTER_NONE
+            buildUi()
+        } catch (e: Throwable) {
+            showError(e)
+        }
+    }
+
+    private fun showError(e: Throwable) {
+        val t = tv("ERROR:\n" + Log.getStackTraceString(e).take(1800), 11f, Color.WHITE)
+        t.setPadding(dp(16), dp(16), dp(16), dp(16))
+        val sv = ScrollView(this)
+        sv.setBackgroundColor(bg)
+        sv.addView(t)
+        setContentView(sv)
     }
 
     private fun loadGames() {
