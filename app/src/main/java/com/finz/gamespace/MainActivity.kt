@@ -258,6 +258,20 @@ class MainActivity : AppCompatActivity() {
 
     private fun launchGame() {
         val g = games.getOrNull(pick) ?: return
+        if (!Settings.canDrawOverlays(this)) {
+            Toast.makeText(
+                this, "Izinkan 'Tampil di atas aplikasi lain', lalu tekan MAIN lagi",
+                Toast.LENGTH_LONG
+            ).show()
+            startActivity(
+                Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    android.net.Uri.parse("package:$packageName")
+                )
+            )
+            return
+        }
+        startForegroundService(Intent(this, OverlayService::class.java))
         packageManager.getLaunchIntentForPackage(g.activityInfo.packageName)
             ?.let { startActivity(it) }
     }
