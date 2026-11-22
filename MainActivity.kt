@@ -9,7 +9,6 @@ import android.content.pm.ActivityInfo
 import android.content.pm.ApplicationInfo
 import android.content.pm.ResolveInfo
 import android.graphics.Color
-import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.os.BatteryManager
 import android.os.Bundle
@@ -21,27 +20,13 @@ import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.ImageView
 import android.widget.LinearLayout
-import android.widget.TextView
 import android.widget.Toast
-import androidx.appcompat.app.AppCompatActivity
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : BaseUi() {
 
-    private val themes = intArrayOf(
-        0xFFFF7A1A.toInt(), 0xFF2D9CFF.toInt(),
-        0xFFFF3B47.toInt(), 0xFF22E58B.toInt()
-    )
-    private var themeIndex = 0
     private var pick = 0
     private var focusOn = false
     private var games: List<ResolveInfo> = emptyList()
-
-    private val bg = 0xFF0B0D12.toInt()
-    private val panel = 0xFF161A22.toInt()
-    private val muted = 0xFF8B93A1.toInt()
-    private val accent: Int get() = themes[themeIndex]
-    private val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
-    private val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -71,44 +56,6 @@ class MainActivity : AppCompatActivity() {
             .sortedBy { it.loadLabel(pm).toString().lowercase() }
     }
 
-    // ---------- helper ----------
-    private fun dp(v: Int) = (v * resources.displayMetrics.density).toInt()
-
-    private fun mix(c: Int, r: Float): Int = Color.rgb(
-        (Color.red(bg) + (Color.red(c) - Color.red(bg)) * r).toInt(),
-        (Color.green(bg) + (Color.green(c) - Color.green(bg)) * r).toInt(),
-        (Color.blue(bg) + (Color.blue(c) - Color.blue(bg)) * r).toInt()
-    )
-
-    private fun box(color: Int, radius: Int, strokeColor: Int = 0, strokeDp: Int = 0) =
-        GradientDrawable().apply {
-            setColor(color)
-            cornerRadius = dp(radius).toFloat()
-            if (strokeDp > 0) setStroke(dp(strokeDp), strokeColor)
-        }
-
-    private fun lp(w: Int, h: Int, l: Int = 0, t: Int = 0, r: Int = 0, b: Int = 0) =
-        LinearLayout.LayoutParams(w, h).apply { setMargins(dp(l), dp(t), dp(r), dp(b)) }
-
-    private fun tv(s: String, size: Float, color: Int, bold: Boolean = false) =
-        TextView(this).apply {
-            text = s
-            textSize = size
-            setTextColor(color)
-            if (bold) typeface = Typeface.DEFAULT_BOLD
-        }
-
-    private fun stat(label: String, value: String): View = LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        gravity = Gravity.CENTER
-        addView(tv(label, 9f, muted, true).apply { letterSpacing = 0.15f })
-        addView(tv(value, 16f, Color.WHITE, true).apply {
-            maxLines = 1
-            ellipsize = TextUtils.TruncateAt.END
-        })
-    }
-
-    // ---------- UI ----------
     private fun buildUi() {
         val pm = packageManager
         if (pick >= games.size) pick = 0
@@ -121,7 +68,6 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        // Sidebar kiri
         val side = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER_HORIZONTAL
@@ -149,7 +95,6 @@ class MainActivity : AppCompatActivity() {
         side.addView(tv("Fokus", 9f, muted).apply { gravity = Gravity.CENTER },
             lp(WRAP, WRAP, t = 4))
 
-        // Kolom utama
         val main = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(14), dp(20), dp(12))
@@ -169,7 +114,6 @@ class MainActivity : AppCompatActivity() {
         }
         main.addView(header, lp(MATCH, WRAP))
 
-        // Kartu game
         val scroll = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -182,7 +126,6 @@ class MainActivity : AppCompatActivity() {
             bottomMargin = dp(10)
         })
 
-        // Bar statistik + tombol main
         val am = getSystemService(ActivityManager::class.java)
         val mi = ActivityManager.MemoryInfo()
         am.getMemoryInfo(mi)
@@ -259,16 +202,10 @@ class MainActivity : AppCompatActivity() {
     private fun launchGame() {
         val g = games.getOrNull(pick) ?: return
         if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(
-                this, "Izinkan 'Tampil di atas aplikasi lain', lalu tekan MAIN lagi",
-                Toast.LENGTH_LONG
-            ).show()
-            startActivity(
-                Intent(
-                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
-                    android.net.Uri.parse("package:$packageName")
-                )
-            )
+            Toast.makeText(this, "Izinkan 'Tampil di atas aplikasi lain', lalu tekan MAIN lagi",
+                Toast.LENGTH_LONG).show()
+            startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                android.net.Uri.parse("package:$packageName")))
             return
         }
         startForegroundService(Intent(this, OverlayService::class.java))
