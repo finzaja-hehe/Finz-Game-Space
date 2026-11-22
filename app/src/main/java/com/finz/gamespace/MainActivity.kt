@@ -286,8 +286,4 @@ class MainActivity : AppCompatActivity() {
         focusOn = !focusOn
         nm.setInterruptionFilter(
             if (focusOn) NotificationManager.INTERRUPTION_FILTER_NONE
-            else NotificationManager.INTERRUPTION_FILTER_ALL
-        )
-        buildUi()
-    }
-}
+            else NotificationManager.INTERRUPTI
