@@ -1,11 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
-    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
-    <uses-permission android:name="android.permission.WRITE_SETTINGS" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
-
     <queries>
         <intent>
             <action android:name="android.intent.action.MAIN" />
@@ -14,7 +9,6 @@
     </queries>
 
     <application
-        android:name=".GameApp"
         android:label="Finz Game Space"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
         <activity
@@ -25,17 +19,5 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity
-            android:name=".CrashActivity"
-            android:exported="false"
-            android:process=":crash" />
-        <service
-            android:name=".OverlayService"
-            android:exported="false"
-            android:foregroundServiceType="specialUse">
-            <property
-                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-                android:value="game_overlay" />
-        </service>
     </application>
 </manifest>
