@@ -7,8 +7,9 @@ import android.app.Service
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.Color
+import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
-import android.media.AudioManager
+import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
@@ -18,7 +19,6 @@ import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import java.text.SimpleDateFormat
@@ -35,18 +35,29 @@ class OverlayService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var bubble: View? = null
     private var bubbleLp: WindowManager.LayoutParams? = null
-    private var panel: View? = null
+    private var hud: HudPanel? = null
     private var panelLp: WindowManager.LayoutParams? = null
-    private val vals = HashMap<String, TextView>()
-    private var dndBtn: TextView? = null
-    private var keepBtn: TextView? = null
-    private var crossBtn: TextView? = null
+    private var mon: TextView? = null
     private var keepOn = false
+    private var running = false
 
     private val tick = object : Runnable {
         override fun run() {
             updateStats()
-            handler.postDelayed(this, 1000)
+            if (hud != null || mon != null) {
+                Ping.start()
+                handler.postDelayed(this, 1000)
+            } else {
+                Ping.stop()
+                running = false
+            }
+        }
+    }
+
+    private fun startTick() {
+        if (!running) {
+            running = true
+            handler.post(tick)
         }
     }
 
@@ -67,9 +78,12 @@ class OverlayService : Service() {
 
     override fun onDestroy() {
         handler.removeCallbacks(tick)
+        running = false
+        Ping.stop()
         cross.destroy()
-        try { panel?.let { wm.removeView(it) } } catch (e: Exception) {}
-        try { bubble?.let { wm.removeView(it) } } catch (e: Exception) {}
+        hud?.let { try { wm.removeView(it.root) } catch (e: Exception) {} }
+        mon?.let { try { wm.removeView(it) } catch (e: Exception) {} }
+        bubble?.let { try { wm.removeView(it) } catch (e: Exception) {} }
         super.onDestroy()
     }
 
@@ -90,7 +104,6 @@ class OverlayService : Service() {
         }
     }
 
-    // ---------- bubble ----------
     private fun showBubble() {
         val size = kit.dp(46)
         val v = kit.tx("F", 18f, Color.BLACK, true).apply {
@@ -134,124 +147,80 @@ class OverlayService : Service() {
         bubbleLp = p
     }
 
-    // ---------- panel ----------
     private fun openPanel() {
         cross.hidePanel(false)
         bubble?.visibility = View.GONE
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            background = kit.box(0xEE12151C.toInt(), 22, kit.accent, 1)
-            setPadding(kit.dp(14), kit.dp(10), kit.dp(14), kit.dp(10))
-        }
-
-        val top = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
-        val left = LinearLayout(this)
-        dndBtn = circle(left, "🔕", "DND") { toggleDnd() }
-        keepBtn = circle(left, "💡", "Layar On") { toggleKeep() }
-        circle(left, "🧹", "Bersihkan") { act.cleanRam() }
-        crossBtn = circle(left, "🎯", "Crosshair") {
-            closePanel()
-            cross.showPanel()
-        }
-        top.addView(left, LinearLayout.LayoutParams(kit.WRAP, kit.WRAP))
-
-        val mid = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER_HORIZONTAL
-        }
-        val jam = kit.tx("--:--", 22f, Color.WHITE, true)
-        vals["jam"] = jam
-        mid.addView(jam)
-        val row = LinearLayout(this)
-        stat(row, "ram", "RAM")
-        stat(row, "suhu", "SUHU")
-        stat(row, "bat", "BATERAI")
-        stat(row, "net", "INTERNET")
-        mid.addView(row, LinearLayout.LayoutParams(-1, kit.WRAP))
-        top.addView(mid, LinearLayout.LayoutParams(0, kit.WRAP, 1f))
-
-        val right = LinearLayout(this)
-        circle(right, "⚙", "Pengaturan") { act.openSettings() }
-        circle(right, "↩", "Aplikasi") {
-            startActivity(
-                Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-        }
-        circle(right, "✕", "Tutup") { closePanel() }
-        circle(right, "⏻", "Matikan") { stopSelf() }
-        top.addView(right, LinearLayout.LayoutParams(kit.WRAP, kit.WRAP))
-        root.addView(top)
-
-        val am = getSystemService(AudioManager::class.java)
-        val bright = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128)
-        val sliders = LinearLayout(this)
-        sliders.addView(
-            kit.slider("☀", 5, 255, bright, 24) { act.setBrightness(it) },
-            LinearLayout.LayoutParams(0, kit.WRAP, 1f).apply { rightMargin = kit.dp(10) }
+        val h = HudPanel(this, kit, act) { onAction(it) }
+        h.setHz(refreshHz())
+        h.active("dnd", act.dndOn())
+        h.active("keep", keepOn)
+        h.active("cross", getSharedPreferences("ch", MODE_PRIVATE).getBoolean("on", false))
+        h.active("mon", mon != null)
+        h.active(
+            "rot",
+            Settings.System.getInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 1) == 1
         )
-        sliders.addView(
-            kit.slider(
-                "🔊", 0, am.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
-                am.getStreamVolume(AudioManager.STREAM_MUSIC), 24
-            ) { am.setStreamVolume(AudioManager.STREAM_MUSIC, it, 0) },
-            LinearLayout.LayoutParams(0, kit.WRAP, 1f).apply { leftMargin = kit.dp(10) }
-        )
-        root.addView(sliders, LinearLayout.LayoutParams(-1, kit.WRAP).apply { topMargin = kit.dp(4) })
-
-        dndBtn?.background = kit.circleBg(act.dndOn())
-        keepBtn?.background = kit.circleBg(keepOn)
-        crossBtn?.background = kit.circleBg(
-            getSharedPreferences("ch", MODE_PRIVATE).getBoolean("on", false)
-        )
-
-        val w = minOf(resources.displayMetrics.widthPixels - kit.dp(24), kit.dp(760))
-        val p = kit.lp(w, kit.WRAP, 0, kit.dp(6), Gravity.TOP or Gravity.CENTER_HORIZONTAL, keepOn)
-        wm.addView(root, p)
-        panel = root
+        val w = minOf(resources.displayMetrics.widthPixels - kit.dp(16), kit.dp(540))
+        val p = kit.lp(w, kit.WRAP, 0, kit.dp(4), Gravity.TOP or Gravity.CENTER_HORIZONTAL, keepOn)
+        wm.addView(h.root, p)
+        hud = h
         panelLp = p
-        handler.post(tick)
+        updateStats()
+        startTick()
     }
 
     private fun closePanel() {
-        handler.removeCallbacks(tick)
-        try { panel?.let { wm.removeView(it) } } catch (e: Exception) {}
-        panel = null
+        hud?.let { try { wm.removeView(it.root) } catch (e: Exception) {} }
+        hud = null
         panelLp = null
         bubble?.visibility = View.VISIBLE
     }
 
-    private fun circle(parent: LinearLayout, icon: String, label: String, action: () -> Unit):
-        TextView {
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-            setOnClickListener { action() }
+    private fun onAction(key: String) {
+        when (key) {
+            "dnd" -> hud?.active("dnd", act.toggleDnd())
+            "keep" -> toggleKeep()
+            "set" -> act.openSettings()
+            "cross" -> {
+                closePanel()
+                cross.showPanel()
+            }
+            "hz", "res" -> openDisplay()
+            "app" -> startActivity(
+                Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+            "off" -> stopSelf()
+            "turbo" -> act.cleanRam()
+            "mon" -> toggleMonitor()
+            "rot" -> toggleRotate()
+            "close" -> closePanel()
         }
-        val c = kit.tx(icon, 16f, Color.WHITE).apply {
-            gravity = Gravity.CENTER
-            background = kit.circleBg(false)
-        }
-        col.addView(c, LinearLayout.LayoutParams(kit.dp(40), kit.dp(40)))
-        col.addView(kit.tx(label, 9f, kit.muted).apply { gravity = Gravity.CENTER })
-        parent.addView(col, LinearLayout.LayoutParams(kit.dp(58), kit.WRAP))
-        return c
     }
 
-    private fun stat(parent: LinearLayout, key: String, label: String) {
-        val col = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            gravity = Gravity.CENTER
-        }
-        col.addView(kit.tx(label, 8f, kit.muted, true))
-        val v = kit.tx("-", 13f, Color.WHITE, true)
-        vals[key] = v
-        col.addView(v)
-        parent.addView(col, LinearLayout.LayoutParams(0, kit.WRAP, 1f))
+    private fun refreshHz(): Int =
+        try { wm.defaultDisplay.refreshRate.toInt() } catch (e: Exception) { 60 }
+
+    private fun openDisplay() {
+        startActivity(
+            Intent(Settings.ACTION_DISPLAY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
     }
 
-    // ---------- aksi ----------
-    private fun toggleDnd() {
-        dndBtn?.background = kit.circleBg(act.toggleDnd())
+    private fun needWrite(): Boolean {
+        if (Settings.System.canWrite(this)) return false
+        Toast.makeText(this, "Izinkan ubah pengaturan sistem dulu", Toast.LENGTH_LONG).show()
+        startActivity(
+            Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:$packageName"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        )
+        return true
+    }
+
+    private fun toggleRotate() {
+        if (needWrite()) return
+        val cur = Settings.System.getInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 1)
+        Settings.System.putInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 1 - cur)
+        hud?.active("rot", cur == 0)
     }
 
     private fun applyKeep(p: WindowManager.LayoutParams?, v: View?) {
@@ -264,18 +233,50 @@ class OverlayService : Service() {
     private fun toggleKeep() {
         keepOn = !keepOn
         applyKeep(bubbleLp, bubble)
-        applyKeep(panelLp, panel)
-        keepBtn?.background = kit.circleBg(keepOn)
+        applyKeep(panelLp, hud?.root)
+        hud?.active("keep", keepOn)
         Toast.makeText(
             this, if (keepOn) "Layar tetap menyala" else "Layar normal", Toast.LENGTH_SHORT
         ).show()
     }
 
+    private fun toggleMonitor() {
+        if (mon != null) {
+            mon?.let { try { wm.removeView(it) } catch (e: Exception) {} }
+            mon = null
+            hud?.active("mon", false)
+            return
+        }
+        val t = kit.tx("", 11f, Color.WHITE, true).apply {
+            background = kit.box(0xAA0B0D12.toInt(), 8)
+            setPadding(kit.dp(8), kit.dp(4), kit.dp(8), kit.dp(4))
+        }
+        val f = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        val p = WindowManager.LayoutParams(
+            kit.WRAP, kit.WRAP, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            f, PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = kit.dp(70)
+            y = kit.dp(4)
+        }
+        wm.addView(t, p)
+        mon = t
+        hud?.active("mon", true)
+        updateStats()
+        startTick()
+    }
+
     private fun updateStats() {
-        vals["ram"]?.text = "${act.ramPct()}%"
-        vals["suhu"]?.text = "%.1f°C".format(act.tempC())
-        vals["bat"]?.text = "${act.batPct()}%"
-        vals["net"]?.text = act.netText()
-        vals["jam"]?.text = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+        val ram = act.ramPct()
+        val temp = act.tempC()
+        val net = act.netText()
+        val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
+        hud?.update(ram, temp, net, time)
+        mon?.text = String.format(
+            "RAM %d%%  |  %.1f°C  |  BAT %d%%  |  %s  |  CPU %s  |  %s",
+            ram, temp, act.batPct(), net, SysInfo.cpuGhz(), Ping.text()
+        )
     }
 }
