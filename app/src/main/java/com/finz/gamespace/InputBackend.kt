@@ -37,6 +37,9 @@ object InputBackend {
         else -> "Aksesibilitas"
     }
 
+    fun statusText(): String =
+        if (ready) "Mode aktif: ${name(mode)}" else "Mode aktif: Dasar (Aksesibilitas)"
+
     fun stop() {
         ready = false
         mode = ACC
@@ -70,7 +73,7 @@ object InputBackend {
             }
             if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) {
                 Shizuku.requestPermission(100)
-                return "Izinkan di jendela Shizuku, lalu tekan F7 lagi"
+                return "Izinkan di jendela Shizuku, lalu pilih SHIZUKU lagi"
             }
             val mt = Shizuku::class.java.getDeclaredMethod(
                 "newProcess",
@@ -100,7 +103,7 @@ object InputBackend {
         Thread {
             try { p.errorStream.bufferedReader().readText() } catch (e: Exception) {}
         }.start()
-        latch.await(4, TimeUnit.SECONDS)
+        latch.await(if (m == ROOT) 25L else 8L, TimeUnit.SECONDS)
         val f = first.get()
         if (f == "READY") {
             ready = true
@@ -108,7 +111,10 @@ object InputBackend {
             return "Mode ${name(m)} aktif"
         }
         stop()
-        return "Gagal memulai ${name(m)}" + (if (f.isNullOrEmpty()) "" else ": $f")
+        val why = if (f.isNullOrEmpty()) {
+            if (m == ROOT) " (HP belum di-root atau izin su ditolak)" else ""
+        } else ": $f"
+        return "Gagal memulai ${name(m)}$why"
     }
 
     private fun send(s: String) {
