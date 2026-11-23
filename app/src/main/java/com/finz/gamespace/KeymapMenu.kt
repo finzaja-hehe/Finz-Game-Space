@@ -107,9 +107,12 @@ class KeymapMenu(
         chip("DASAR", InputBackend.ACC)
         root.addView(row, mp(MATCH, kit.WRAP, 0, 0, 0, 0))
 
-        root.addView(btn("🔗  Pairing debugging nirkabel", false) {
+        root.addView(btn("🔗  Pairing lewat notifikasi", false) {
             hide()
-            PairOverlay(ctx, wm, kit).show()
+            ctx.startForegroundService(
+                Intent(ctx, PairService::class.java).setAction("START")
+            )
+            toast("Tarik layar ke bawah, tulis kode lewat notifikasi")
         }, mp(MATCH, kit.WRAP, 0, 10, 0, 0))
 
         root.addView(btn("✎  Atur tombol (Editor)", false) {
