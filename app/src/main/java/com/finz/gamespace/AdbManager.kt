@@ -1,11 +1,14 @@
 package com.finz.gamespace
 
 import android.content.Context
+import android.net.nsd.NsdManager
+import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import android.util.Base64
 import io.github.muntashirakon.adb.AbsAdbConnectionManager
 import io.github.muntashirakon.adb.AdbStream
 import java.io.ByteArrayInputStream
+import java.lang.reflect.InvocationTargetException
 import java.math.BigInteger
 import java.security.KeyFactory
 import java.security.KeyPair
@@ -18,10 +21,12 @@ import java.security.spec.PKCS8EncodedKeySpec
 import java.util.Date
 import java.util.Random
 import java.util.concurrent.Callable
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicInteger
 import org.bouncycastle.asn1.x500.X500Name
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
@@ -123,13 +128,60 @@ object AdbLink {
             .edit().putBoolean("paired", true).apply()
     }
 
+    private fun findPort(ctx: Context, type: String, sec: Long): Int {
+        val nsd = ctx.getSystemService(Context.NSD_SERVICE) as NsdManager
+        val latch = CountDownLatch(1)
+        val port = AtomicInteger(0)
+        val listener = object : NsdManager.DiscoveryListener {
+            override fun onDiscoveryStarted(serviceType: String) {}
+            override fun onDiscoveryStopped(serviceType: String) {}
+            override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
+                latch.countDown()
+            }
+            override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {}
+            override fun onServiceLost(serviceInfo: NsdServiceInfo) {}
+            override fun onServiceFound(serviceInfo: NsdServiceInfo) {
+                nsd.resolveService(serviceInfo, object : NsdManager.ResolveListener {
+                    override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
+                    override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
+                        port.set(serviceInfo.port)
+                        latch.countDown()
+                    }
+                })
+            }
+        }
+        nsd.discoverServices(type, NsdManager.PROTOCOL_DNS_SD, listener)
+        latch.await(sec, TimeUnit.SECONDS)
+        try {
+            nsd.stopServiceDiscovery(listener)
+        } catch (e: Exception) {
+        }
+        return port.get()
+    }
+
+    private fun connectWireless(ctx: Context, m: AdbManager) {
+        val port = findPort(ctx, "_adb-tls-connect._tcp", 12)
+        if (port <= 0) {
+            throw Exception("Debugging nirkabel tidak ditemukan. Nyalakan dulu dan pakai Wi-Fi")
+        }
+        val mt = m.javaClass.methods.firstOrNull {
+            it.name == "connect" && it.parameterTypes.size == 2 &&
+                it.parameterTypes[0] == String::class.java
+        } ?: throw Exception("method connect tidak ditemukan di library")
+        try {
+            mt.invoke(m, "127.0.0.1", port)
+        } catch (e: InvocationTargetException) {
+            throw Exception(e.targetException?.message ?: e.toString())
+        }
+    }
+
     fun shell(ctx: Context, cmd: String): AdbStream {
         val m = AdbManager.get(ctx)
         try {
             return within(10) { m.openStream("exec:$cmd") }
         } catch (e: Exception) {
         }
-        within(25) { m.connectTls(ctx, 20000) }
+        within(30) { connectWireless(ctx, m) }
         return within(10) { m.openStream("exec:$cmd") }
     }
 }
