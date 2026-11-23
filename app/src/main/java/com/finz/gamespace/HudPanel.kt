@@ -5,6 +5,7 @@ import android.graphics.Color
 import android.media.AudioManager
 import android.provider.Settings
 import android.view.Gravity
+import android.view.WindowManager
 import android.widget.LinearLayout
 
 class HudPanel(
@@ -23,7 +24,15 @@ class HudPanel(
     private fun hex(key: String, icon: String, label: String): HexButton {
         val h = HexButton(ctx, icon, label)
         h.accent = kit.accent
-        h.setOnClickListener { onAction(key) }
+        h.setOnClickListener {
+            if (key == "keymap") {
+                onAction("close")
+                val wm = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                KeymapMenu.open(ctx, wm, kit)
+            } else {
+                onAction(key)
+            }
+        }
         btn[key] = h
         return h
     }
@@ -48,10 +57,10 @@ class HudPanel(
 
         val left = grid(
             listOf(hex("dnd", "🔕", "DND"), hex("keep", "💡", "Layar On"), hex("set", "⚙", "Setelan")),
-            listOf(hex("cross", "🎯", "Crosshair"), hex("hz", "60", "Refresh"), hex("res", "▭", "Resolusi"))
+            listOf(hex("cross", "🎯", "Crosshair"), hex("hz", "60", "Refresh"), hex("keymap", "🎮", "Keymap"))
         )
         val right = grid(
-            listOf(hex("app", "↩", "Aplikasi"), hex("off", "⏻", "Matikan"), hex("turbo", "🚀", "Turbo")),
+            listOf(hex("app", "↩", "Aplikasi"), hex("off", "⛔", "Matikan"), hex("turbo", "🚀", "Turbo")),
             listOf(hex("mon", "📊", "Monitor"), hex("rot", "🔄", "Rotasi"), hex("close", "✕", "Tutup"))
         )
         val mid = LinearLayout(ctx)
