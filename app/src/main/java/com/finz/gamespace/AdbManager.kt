@@ -1,6 +1,8 @@
 package com.finz.gamespace
 
 import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Build
@@ -10,6 +12,7 @@ import io.github.muntashirakon.adb.AdbStream
 import java.io.ByteArrayInputStream
 import java.lang.reflect.InvocationTargetException
 import java.math.BigInteger
+import java.net.Inet4Address
 import java.security.KeyFactory
 import java.security.KeyPair
 import java.security.KeyPairGenerator
@@ -27,6 +30,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 import org.bouncycastle.asn1.x500.X500Name
 import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
 import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
@@ -121,17 +125,34 @@ object AdbLink {
     fun paired(ctx: Context): Boolean =
         ctx.getSharedPreferences("adbkey", Context.MODE_PRIVATE).getBoolean("paired", false)
 
-    fun pair(ctx: Context, port: Int, code: String) {
+    @Suppress("DEPRECATION")
+    private fun wifiIp(ctx: Context): String? {
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        for (n in cm.allNetworks) {
+            val caps = cm.getNetworkCapabilities(n) ?: continue
+            if (!caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) continue
+            val lp = cm.getLinkProperties(n) ?: continue
+            for (la in lp.linkAddresses) {
+                val a = la.address
+                if (a is Inet4Address && !a.isLoopbackAddress) return a.hostAddress
+            }
+        }
+        return null
+    }
+
+    fun pair(ctx: Context, host: String?, port: Int, code: String) {
         val m = AdbManager.get(ctx)
-        within(20) { m.pair("127.0.0.1", port, code) }
+        val h = if (!host.isNullOrEmpty()) host else (wifiIp(ctx) ?: "127.0.0.1")
+        within(20) { m.pair(h, port, code) }
         ctx.getSharedPreferences("adbkey", Context.MODE_PRIVATE)
             .edit().putBoolean("paired", true).apply()
     }
 
-    private fun findPort(ctx: Context, type: String, sec: Long): Int {
+    private fun findService(ctx: Context, type: String, sec: Long): Pair<String?, Int> {
         val nsd = ctx.getSystemService(Context.NSD_SERVICE) as NsdManager
         val latch = CountDownLatch(1)
         val port = AtomicInteger(0)
+        val host = AtomicReference<String?>(null)
         val listener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) {}
             override fun onDiscoveryStopped(serviceType: String) {}
@@ -145,6 +166,7 @@ object AdbLink {
                     override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {}
                     override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
                         port.set(serviceInfo.port)
+                        host.set(serviceInfo.host?.hostAddress)
                         latch.countDown()
                     }
                 })
@@ -156,20 +178,22 @@ object AdbLink {
             nsd.stopServiceDiscovery(listener)
         } catch (e: Exception) {
         }
-        return port.get()
+        return Pair(host.get(), port.get())
     }
 
     private fun connectWireless(ctx: Context, m: AdbManager) {
-        val port = findPort(ctx, "_adb-tls-connect._tcp", 12)
+        val svc = findService(ctx, "_adb-tls-connect._tcp", 12)
+        val port = svc.second
         if (port <= 0) {
             throw Exception("Debugging nirkabel tidak ditemukan. Nyalakan dulu dan pakai Wi-Fi")
         }
+        val host = svc.first ?: wifiIp(ctx) ?: "127.0.0.1"
         val mt = m.javaClass.methods.firstOrNull {
             it.name == "connect" && it.parameterTypes.size == 2 &&
                 it.parameterTypes[0] == String::class.java
         } ?: throw Exception("method connect tidak ditemukan di library")
         try {
-            mt.invoke(m, "127.0.0.1", port)
+            mt.invoke(m, host, port)
         } catch (e: InvocationTargetException) {
             throw Exception(e.targetException?.message ?: e.toString())
         }
