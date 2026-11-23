@@ -14,7 +14,17 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
-      - run: gradle assembleDebug
+      - name: Build
+        shell: bash
+        run: |
+          set -o pipefail
+          gradle assembleDebug --console=plain 2>&1 | tee build.log
+      - name: Tampilkan error
+        if: failure()
+        shell: bash
+        run: |
+          grep -E '^e: ' build.log | sed -E 's#file:///home/runner/work/[^/]+/[^/]+/##' | sort -u | head -7 | while IFS= read -r l; do echo "::error::$l"; done
+          grep -E 'Duplicate class|Could not resolve|Could not find|Manifest merger failed|AAPT' build.log | sort -u | head -3 | while IFS= read -r l; do echo "::error::$l"; done
       - uses: actions/upload-artifact@v4
         with:
           name: GameSpace-APK
