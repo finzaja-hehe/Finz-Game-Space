@@ -14,6 +14,11 @@ import kotlin.math.hypot
 
 class TapService : AccessibilityService() {
 
+    companion object {
+        @Volatile
+        var instance: TapService? = null
+    }
+
     private var wm: WindowManager? = null
     private var editor: KeyMapEditor? = null
     private var cache: MutableMap<Int, FloatArray> = LinkedHashMap()
@@ -22,10 +27,22 @@ class TapService : AccessibilityService() {
     private var pending: FloatArray? = null
     private var enabled = true
 
+    fun openEditorExternal() {
+        if (editor == null) openEditor()
+    }
+
+    fun toggleEnabled(): Boolean {
+        enabled = !enabled
+        return enabled
+    }
+
+    fun isEnabled(): Boolean = enabled
+
     override fun onServiceConnected() {
         super.onServiceConnected()
+        instance = this
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        say("Finz Keymap aktif. F10 editor, F9 nyala/mati, F8/F7/F6 mode")
+        say("Finz Keymap aktif. F10 editor, F9 nyala/mati")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -41,6 +58,7 @@ class TapService : AccessibilityService() {
     override fun onInterrupt() {}
 
     override fun onUnbind(intent: Intent?): Boolean {
+        instance = null
         closeEditor()
         InputBackend.stop()
         return super.onUnbind(intent)
