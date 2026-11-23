@@ -52,7 +52,7 @@ class KeymapMenu(
         kit.tx(label, 12f, if (on) Color.BLACK else Color.WHITE, true).apply {
             gravity = Gravity.CENTER
             background = kit.box(if (on) kit.accent else dark, 14, kit.accent, 1)
-            setPadding(kit.dp(10), kit.dp(10), kit.dp(10), kit.dp(10))
+            setPadding(kit.dp(8), kit.dp(10), kit.dp(8), kit.dp(10))
             setOnClickListener { action() }
         }
 
@@ -97,14 +97,20 @@ class KeymapMenu(
         fun chip(label: String, m: Int) {
             val on = if (m == InputBackend.ACC) !InputBackend.ready
             else (InputBackend.ready && InputBackend.mode == m)
-            val lp = mp(0, kit.WRAP, 0, 0, 6, 0)
+            val lp = mp(0, kit.WRAP, 0, 0, 5, 0)
             lp.weight = 1f
             row.addView(btn(label, on) { pickMode(m) }, lp)
         }
         chip("ROOT", InputBackend.ROOT)
         chip("SHIZUKU", InputBackend.SHIZUKU)
+        chip("ADB", InputBackend.ADB)
         chip("DASAR", InputBackend.ACC)
         root.addView(row, mp(MATCH, kit.WRAP, 0, 0, 0, 0))
+
+        root.addView(btn("🔗  Pairing debugging nirkabel", false) {
+            hide()
+            PairOverlay(ctx, wm, kit).show()
+        }, mp(MATCH, kit.WRAP, 0, 10, 0, 0))
 
         root.addView(btn("✎  Atur tombol (Editor)", false) {
             val s = TapService.instance
@@ -114,7 +120,7 @@ class KeymapMenu(
                 hide()
                 s.openEditorExternal()
             }
-        }, mp(MATCH, kit.WRAP, 0, 10, 0, 0))
+        }, mp(MATCH, kit.WRAP, 0, 8, 0, 0))
 
         val on = svc?.isEnabled() ?: false
         root.addView(
@@ -136,7 +142,7 @@ class KeymapMenu(
         }
         root.addView(btn("Tutup", false) { hide() }, mp(MATCH, kit.WRAP, 0, 8, 0, 0))
 
-        val w = minOf(ctx.resources.displayMetrics.widthPixels - kit.dp(16), kit.dp(340))
+        val w = minOf(ctx.resources.displayMetrics.widthPixels - kit.dp(16), kit.dp(380))
         wm.addView(root, kit.lp(w, kit.WRAP, 0, 0, Gravity.CENTER))
         view = root
     }
