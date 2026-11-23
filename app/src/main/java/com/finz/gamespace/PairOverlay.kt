@@ -27,9 +27,9 @@ class PairOverlay(
         view = null
     }
 
-    private fun field(h: String): EditText = EditText(ctx).apply {
+    private fun field(h: String, number: Boolean): EditText = EditText(ctx).apply {
         hint = h
-        inputType = InputType.TYPE_CLASS_NUMBER
+        inputType = if (number) InputType.TYPE_CLASS_NUMBER else InputType.TYPE_CLASS_TEXT
         setTextColor(Color.WHITE)
         setHintTextColor(kit.muted)
         textSize = 14f
@@ -60,12 +60,12 @@ class PairOverlay(
             kit.tx(
                 "1. Buka Pengaturan > Opsi pengembang > Debugging nirkabel (pakai Wi-Fi)\n" +
                     "2. Ketuk \"Pasangkan perangkat dengan kode\"\n" +
-                    "3. Isi PORT dan KODE yang tampil di sana, lalu ketuk Pasangkan",
+                    "3. Isi PORT (atau IP:PORT) dan KODE yang tampil di sana, lalu ketuk Pasangkan",
                 11f, kit.muted
             ), mp(6)
         )
-        val port = field("Port (contoh 41823)")
-        val code = field("Kode 6 digit")
+        val port = field("Port, atau IP:Port (contoh 10.33.48.28:44319)", false)
+        val code = field("Kode 6 digit", true)
         val status = kit.tx("", 11f, Color.WHITE, true)
         root.addView(port, mp(10))
         root.addView(code, mp(8))
@@ -75,15 +75,17 @@ class PairOverlay(
         val lp1 = LinearLayout.LayoutParams(0, kit.WRAP, 1f).apply { rightMargin = kit.dp(6) }
         val lp2 = LinearLayout.LayoutParams(0, kit.WRAP, 1f)
         row.addView(button("Pasangkan") {
-            val p = port.text.toString().trim().toIntOrNull()
+            val raw = port.text.toString().trim()
             val c = code.text.toString().trim()
+            val host = if (raw.contains(":")) raw.substringBeforeLast(":").trim() else null
+            val p = (if (raw.contains(":")) raw.substringAfterLast(":") else raw).trim().toIntOrNull()
             if (p == null || c.length != 6) {
                 status.text = "Isi port dan kode 6 digit"
             } else {
                 status.text = "Memasangkan..."
                 Thread {
                     val msg = try {
-                        AdbLink.pair(ctx, p, c)
+                        AdbLink.pair(ctx, host, p, c)
                         "Berhasil! Sekarang pilih ADB di menu Keymap"
                     } catch (e: Throwable) {
                         "Gagal: " + (e.message ?: e.toString())
