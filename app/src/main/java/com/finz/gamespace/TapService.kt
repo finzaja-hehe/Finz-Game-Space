@@ -25,7 +25,7 @@ class TapService : AccessibilityService() {
     override fun onServiceConnected() {
         super.onServiceConnected()
         wm = getSystemService(WINDOW_SERVICE) as WindowManager
-        say("Finz Keymap aktif. F10 = editor, F9 = nyala/mati")
+        say("Finz Keymap aktif. F10 editor, F9 nyala/mati, F8/F7/F6 mode")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
@@ -42,6 +42,7 @@ class TapService : AccessibilityService() {
 
     override fun onUnbind(intent: Intent?): Boolean {
         closeEditor()
+        InputBackend.stop()
         return super.onUnbind(intent)
     }
 
@@ -60,6 +61,16 @@ class TapService : AccessibilityService() {
         return cache
     }
 
+    private fun setBackend(m: Int) {
+        if (m == InputBackend.ACC) {
+            InputBackend.stop()
+            say("Mode: Aksesibilitas")
+            return
+        }
+        say("Menyiapkan ${InputBackend.name(m)}...")
+        InputBackend.start(this, m) { _, msg -> say(msg) }
+    }
+
     override fun onKeyEvent(ev: KeyEvent): Boolean {
         val code = ev.keyCode
         val first = ev.action == KeyEvent.ACTION_DOWN && ev.repeatCount == 0
@@ -71,6 +82,19 @@ class TapService : AccessibilityService() {
             if (first) {
                 enabled = !enabled
                 say(if (enabled) "Keymap nyala" else "Keymap mati")
+            }
+            return true
+        }
+        if (code == KeyEvent.KEYCODE_F8 || code == KeyEvent.KEYCODE_F7 ||
+            code == KeyEvent.KEYCODE_F6
+        ) {
+            if (first) {
+                val m = when (code) {
+                    KeyEvent.KEYCODE_F7 -> InputBackend.SHIZUKU
+                    KeyEvent.KEYCODE_F6 -> InputBackend.ROOT
+                    else -> InputBackend.ACC
+                }
+                setBackend(m)
             }
             return true
         }
@@ -92,8 +116,14 @@ class TapService : AccessibilityService() {
 
     private fun tap(pt: FloatArray) {
         val r = KeyMapStore.real(this)
+        val x = pt[0] * r[0]
+        val y = pt[1] * r[1]
+        if (InputBackend.ready) {
+            InputBackend.tap(x, y)
+            return
+        }
         val path = Path()
-        path.moveTo(pt[0] * r[0], pt[1] * r[1])
+        path.moveTo(x, y)
         val stroke = GestureDescription.StrokeDescription(path, 0, 40)
         dispatchGesture(GestureDescription.Builder().addStroke(stroke).build(), null, null)
     }
