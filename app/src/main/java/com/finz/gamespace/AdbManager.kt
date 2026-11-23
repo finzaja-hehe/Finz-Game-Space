@@ -6,6 +6,7 @@ import android.util.Base64
 import io.github.muntashirakon.adb.AbsAdbConnectionManager
 import io.github.muntashirakon.adb.AdbStream
 import java.io.ByteArrayInputStream
+import java.math.BigInteger
 import java.security.KeyFactory
 import java.security.KeyPair
 import java.security.KeyPairGenerator
@@ -21,7 +22,10 @@ import java.util.concurrent.ExecutionException
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
-import sun.security.x509.*
+import org.bouncycastle.asn1.x500.X500Name
+import org.bouncycastle.cert.jcajce.JcaX509CertificateConverter
+import org.bouncycastle.cert.jcajce.JcaX509v3CertificateBuilder
+import org.bouncycastle.operator.jcajce.JcaContentSignerBuilder
 
 class AdbManager private constructor(ctx: Context) : AbsAdbConnectionManager() {
 
@@ -82,26 +86,13 @@ class AdbManager private constructor(ctx: Context) : AbsAdbConnectionManager() {
         }
 
         private fun makeCert(kp: KeyPair): Certificate {
-            val algo = "SHA512withRSA"
             val from = Date()
             val to = Date(System.currentTimeMillis() + 3650L * 86400000L)
-            val ext = CertificateExtensions()
-            ext.set("SubjectKeyIdentifier",
-                SubjectKeyIdentifierExtension(KeyIdentifier(kp.public).identifier))
-            ext.set("PrivateKeyUsage", PrivateKeyUsageExtension(from, to))
             val name = X500Name("CN=Finz Game Space")
-            val info = X509CertInfo()
-            info.set("version", CertificateVersion(2))
-            info.set("serialNumber", CertificateSerialNumber(Random().nextInt() and Int.MAX_VALUE))
-            info.set("algorithmID", CertificateAlgorithmId(AlgorithmId.get(algo)))
-            info.set("subject", CertificateSubjectName(name))
-            info.set("key", CertificateX509Key(kp.public))
-            info.set("validity", CertificateValidity(from, to))
-            info.set("issuer", CertificateIssuerName(name))
-            info.set("extensions", ext)
-            val c = X509CertImpl(info)
-            c.sign(kp.private, algo)
-            return c
+            val serial = BigInteger.valueOf((Random().nextInt() and Int.MAX_VALUE).toLong())
+            val builder = JcaX509v3CertificateBuilder(name, serial, from, to, name, kp.public)
+            val signer = JcaContentSignerBuilder("SHA512withRSA").build(kp.private)
+            return JcaX509CertificateConverter().getCertificate(builder.build(signer))
         }
     }
 }
