@@ -23,8 +23,15 @@ jobs:
         if: failure()
         shell: bash
         run: |
-          grep -E '^e: ' build.log | sed -E 's#file:///home/runner/work/[^/]+/[^/]+/##' | sort -u | head -7 | while IFS= read -r l; do echo "::error::$l"; done
-          grep -E 'Duplicate class|Could not resolve|Could not find|Manifest merger failed|AAPT' build.log | sort -u | head -3 | while IFS= read -r l; do echo "::error::$l"; done
+          set +e
+          set +o pipefail
+          A=$(grep -E '^e: ' build.log | sed -E 's#file:///home/runner/work/[^/]+/[^/]+/##' | sort -u | head -5 | tr '\n' ' ' | cut -c1-1200)
+          B=$(grep -A10 'What went wrong' build.log | head -14 | tr '\n' ' ' | cut -c1-1500)
+          C=$(grep -E 'Duplicate class|Could not|Manifest merger|AAPT|R8:|Unsupported' build.log | sort -u | head -4 | tr '\n' ' ' | cut -c1-900)
+          echo "::error::KOTLIN: $A"
+          echo "::error::GRADLE: $B"
+          echo "::error::LAIN: $C"
+          exit 0
       - uses: actions/upload-artifact@v4
         with:
           name: GameSpace-APK
