@@ -27,6 +27,12 @@ object InputBackend {
     var ready = false
         private set
 
+    @Volatile
+    var lastMsg = ""
+
+    @Volatile
+    var kbdNote = ""
+
     private var proc: Process? = null
     private var out: OutputStream? = null
     private var closer: (() -> Unit)? = null
@@ -39,15 +45,16 @@ object InputBackend {
         SHIZUKU -> "Shizuku"
         ROOT -> "Root"
         ADB -> "Debugging nirkabel"
-        else -> "Aksesibilitas"
+        else -> "Mati"
     }
 
     fun statusText(): String =
-        if (ready) "Mode aktif: ${name(mode)}" else "Mode aktif: Dasar (Aksesibilitas)"
+        if (ready) "Mode aktif: ${name(mode)}" else "Mode: mati"
 
     fun stop() {
         ready = false
         mode = ACC
+        KeyRouter.kbdCount = -1
         try { out?.close() } catch (e: Exception) {}
         try { proc?.destroy() } catch (e: Exception) {}
         try { closer?.invoke() } catch (e: Exception) {}
@@ -66,17 +73,19 @@ object InputBackend {
                 "Gagal: ${e.message}"
             }
             val ok = ready
+            lastMsg = msg
             ui.post { cb(ok, msg) }
         }
     }
 
     private fun launch(app: Context, m: Int): String {
+        KeyRouter.attach(app)
+        kbdNote = ""
         val cmd = "CLASSPATH='" + app.packageCodePath +
             "' exec app_process /system/bin com.finz.gamespace.InputServer"
         val inp: InputStream
         if (m == ADB) {
-            if (!AdbLink.paired(app)) return "Belum dipasangkan. Ketuk Pairing dulu"
-            val st = AdbLink.shell(app, cmd)
+            val st = AdbConn.shell(app, cmd)
             inp = st.openInputStream()
             out = st.openOutputStream()
             closer = { try { st.close() } catch (e: Exception) {} }
@@ -122,6 +131,16 @@ object InputBackend {
                             result.set(line)
                             latch.countDown()
                         }
+                    } else if (line.startsWith("K ")) {
+                        val q = line.split(" ")
+                        if (q.size >= 3) {
+                            val c = q[1].toIntOrNull()
+                            if (c != null) KeyRouter.onKey(c, q[2] == "1")
+                        }
+                    } else if (line.startsWith("KBD ")) {
+                        KeyRouter.kbdCount = line.substring(4).trim().toIntOrNull() ?: -1
+                    } else if (line.startsWith("KERR")) {
+                        kbdNote = line.substring(4).trim()
                     }
                     line = rd.readLine()
                 }
