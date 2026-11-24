@@ -3,6 +3,7 @@ package com.finz.gamespace
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
+import android.graphics.DashPathEffect
 import android.graphics.Paint
 import android.graphics.RectF
 import android.view.KeyEvent
@@ -16,24 +17,29 @@ interface EditorCtl {
     fun prompt(): String
     fun pending(): List<FloatArray>
     fun flowActive(): Boolean
+    fun dirty(): Boolean
     fun onPick(type: Int)
     fun onTap(x: Float, y: Float)
     fun onCancel()
     fun onClear()
-    fun onClose()
+    fun onExit()
+    fun onSave()
+    fun onShare()
+    fun onImport()
 }
 
 class KeyMapEditor(ctx: Context, private val ctl: EditorCtl) : View(ctx) {
 
     private val p = Paint(Paint.ANTI_ALIAS_FLAG)
     private val box = RectF()
+    private val bar = RectF()
     private val cellR = RectF()
     private val loc = IntArray(2)
     private val d = resources.displayMetrics.density
     private var menuOpen = false
     private val names = arrayOf(
-        "Touch", "Tahan", "Swipe", "Joystick",
-        "Mouse Scroll", "FPS View", "Free Look", "Mouse Pick"
+        "Sentuh", "Tahan", "Geser", "Joystick",
+        "Gulir Mouse", "Tampilan FPS", "Lihat Bebas", "Pilih Mouse"
     )
     private val icons = arrayOf("👆", "✋", "↔", "🕹", "🖱", "🎯", "👁", "🔍")
     private val colors = intArrayOf(
@@ -86,22 +92,52 @@ class KeyMapEditor(ctx: Context, private val ctl: EditorCtl) : View(ctx) {
         }
     }
 
-    private fun btnRect(i: Int) {
-        val w = 100 * d
-        val right = width - 10 * d - i * (w + 8 * d)
-        cellR.set(right - w, 10 * d, right, 46 * d)
+    private fun barBox() {
+        val w = min(width - 24 * d, 400 * d)
+        val l = (width - w) / 2f
+        bar.set(l, 8 * d, l + w, 100 * d)
     }
 
-    private fun drawBtn(c: Canvas, i: Int, text: String, bgc: Int, fg: Int) {
-        btnRect(i)
+    private fun barHit(x: Float, y: Float): Int {
+        barBox()
+        if (!bar.contains(x, y)) return -2
+        val rowH = bar.height() / 2f
+        if (y < bar.top + rowH) {
+            return ((x - bar.left) / (bar.width() / 3f)).toInt().coerceIn(0, 2)
+        }
+        return if (x < bar.centerX()) 3 else 4
+    }
+
+    private fun drawBar(c: Canvas) {
+        barBox()
         p.style = Paint.Style.FILL
-        p.color = bgc
-        c.drawRoundRect(cellR, 10 * d, 10 * d, p)
-        p.color = fg
+        p.color = 0xF05B67F0.toInt()
+        c.drawRoundRect(bar, 16 * d, 16 * d, p)
+        val rowH = bar.height() / 2f
+        val third = bar.width() / 3f
+        p.style = Paint.Style.STROKE
+        p.strokeWidth = 1.5f * d
+        p.color = 0xCCFFFFFF.toInt()
+        p.pathEffect = DashPathEffect(floatArrayOf(4 * d, 3 * d), 0f)
+        c.drawLine(bar.left + 8 * d, bar.top + rowH, bar.right - 8 * d, bar.top + rowH, p)
+        c.drawLine(bar.left + third, bar.top + 6 * d, bar.left + third, bar.top + rowH - 6 * d, p)
+        c.drawLine(bar.left + 2 * third, bar.top + 6 * d, bar.left + 2 * third,
+            bar.top + rowH - 6 * d, p)
+        c.drawLine(bar.centerX(), bar.top + rowH + 6 * d, bar.centerX(), bar.bottom - 6 * d, p)
+        p.pathEffect = null
+        p.style = Paint.Style.FILL
+        p.color = Color.WHITE
         p.textAlign = Paint.Align.CENTER
-        p.isFakeBoldText = true
-        p.textSize = 11 * d
-        c.drawText(text, cellR.centerX(), cellR.centerY() + 4 * d, p)
+        p.isFakeBoldText = false
+        p.textSize = 13 * d
+        val y1 = bar.top + rowH / 2f + 5 * d
+        val y2 = bar.top + rowH * 1.5f + 5 * d
+        c.drawText("Keluar", bar.left + third / 2f, y1, p)
+        c.drawText(if (ctl.flowActive()) "Batal" else "Tambah komponen",
+            bar.left + third * 1.5f, y1, p)
+        c.drawText(if (ctl.dirty()) "Simpan *" else "Simpan", bar.left + third * 2.5f, y1, p)
+        c.drawText("Bagikan", bar.left + bar.width() / 4f, y2, p)
+        c.drawText("Impor", bar.left + bar.width() * 3f / 4f, y2, p)
     }
 
     private fun menuBox() {
@@ -139,7 +175,8 @@ class KeyMapEditor(ctx: Context, private val ctl: EditorCtl) : View(ctx) {
         p.isFakeBoldText = false
         p.color = 0xFF8B93A1.toInt()
         p.textSize = 11 * d
-        c.drawText("Pilih komponen untuk ditaruh di layar", box.centerX(), box.top + 46 * d, p)
+        c.drawText("Pilih komponen untuk ditempatkan pada keymap", box.centerX(),
+            box.top + 46 * d, p)
         for (i in 0 until 8) {
             cell(i)
             val on = i < 4
@@ -176,19 +213,13 @@ class KeyMapEditor(ctx: Context, private val ctl: EditorCtl) : View(ctx) {
             p.color = Color.YELLOW
             c.drawCircle(q[0] * r[0] - loc[0], q[1] * r[1] - loc[1], 22 * d, p)
         }
+        drawBar(c)
         p.style = Paint.Style.FILL
         p.textAlign = Paint.Align.CENTER
-        p.isFakeBoldText = true
-        p.color = Color.WHITE
-        p.textSize = 13 * d
-        c.drawText("Editor Keymap", width / 2f, 70 * d, p)
         p.isFakeBoldText = false
         p.color = 0xFFFFE600.toInt()
         p.textSize = 12 * d
-        c.drawText(ctl.prompt(), width / 2f, 90 * d, p)
-        drawBtn(c, 0, "Selesai", 0xFF22E58B.toInt(), Color.BLACK)
-        drawBtn(c, 1, "Hapus semua", 0xFFFF3B47.toInt(), Color.WHITE)
-        drawBtn(c, 2, if (ctl.flowActive()) "Batal" else "Tambah", 0xFF2D9CFF.toInt(), Color.WHITE)
+        c.drawText(ctl.prompt(), width / 2f, bar.bottom + 22 * d, p)
         if (menuOpen) drawMenu(c)
     }
 
@@ -206,7 +237,8 @@ class KeyMapEditor(ctx: Context, private val ctl: EditorCtl) : View(ctx) {
                         menuOpen = false
                         ctl.onPick(i)
                     } else {
-                        Toast.makeText(context, names[i] + ": segera hadir", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(context, names[i] + ": tahap mouse (segera)",
+                            Toast.LENGTH_SHORT).show()
                     }
                     invalidate()
                     return true
@@ -216,17 +248,17 @@ class KeyMapEditor(ctx: Context, private val ctl: EditorCtl) : View(ctx) {
             invalidate()
             return true
         }
-        for (i in 0..2) {
-            btnRect(i)
-            if (cellR.contains(lx, ly)) {
-                when (i) {
-                    0 -> ctl.onClose()
-                    1 -> ctl.onClear()
-                    else -> if (ctl.flowActive()) ctl.onCancel() else menuOpen = true
-                }
-                invalidate()
-                return true
+        val h = barHit(lx, ly)
+        if (h != -2) {
+            when (h) {
+                0 -> ctl.onExit()
+                1 -> if (ctl.flowActive()) ctl.onCancel() else menuOpen = true
+                2 -> ctl.onSave()
+                3 -> ctl.onShare()
+                else -> ctl.onImport()
             }
+            invalidate()
+            return true
         }
         val r = KeyMapStore.real(context)
         ctl.onTap(e.rawX / r[0], e.rawY / r[1])
