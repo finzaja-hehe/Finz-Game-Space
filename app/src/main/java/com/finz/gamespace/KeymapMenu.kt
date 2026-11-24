@@ -3,7 +3,6 @@ package com.finz.gamespace
 import android.content.Context
 import android.content.Intent
 import android.graphics.Color
-import android.provider.Settings
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -56,17 +55,10 @@ class KeymapMenu(
             setOnClickListener { action() }
         }
 
-    private fun needAccessibility() {
-        toast("Aktifkan Finz Keymap di Aksesibilitas dulu")
-        ctx.startActivity(
-            Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
-    }
-
     private fun pickMode(m: Int) {
         if (m == InputBackend.ACC) {
             InputBackend.stop()
-            toast("Mode dasar (Aksesibilitas)")
+            toast("Mode dimatikan")
             rebuild()
             return
         }
@@ -79,7 +71,6 @@ class KeymapMenu(
 
     fun show() {
         if (view != null) return
-        val svc = TapService.instance
         val root = LinearLayout(ctx).apply {
             orientation = LinearLayout.VERTICAL
             background = kit.box(0xF012151C.toInt(), 20, kit.accent, 1)
@@ -87,16 +78,27 @@ class KeymapMenu(
         }
         root.addView(kit.tx("🎮 KEYMAP", 13f, Color.WHITE, true))
 
-        val st = if (svc == null) "Finz Keymap (Aksesibilitas) belum aktif"
-        else "Keymap: " + (if (svc.isEnabled()) "nyala" else "mati")
-        root.addView(kit.tx(st, 11f, kit.muted), mp(kit.WRAP, kit.WRAP, 0, 4, 0, 0))
-        root.addView(kit.tx(InputBackend.statusText(), 11f, kit.muted),
-            mp(kit.WRAP, kit.WRAP, 0, 2, 0, 8))
+        val ready = InputBackend.ready
+        val status = if (ready) "Mode aktif: ${InputBackend.name(InputBackend.mode)}"
+        else "Belum terhubung. Ketuk ADB di bawah."
+        root.addView(kit.tx(status, 11f, kit.muted), mp(kit.WRAP, kit.WRAP, 0, 4, 0, 0))
+        if (ready) {
+            val kc = KeyRouter.kbdCount
+            val ks = when {
+                kc < 0 -> "Mencari keyboard..."
+                kc == 0 -> "Keyboard tidak terbaca " + InputBackend.kbdNote
+                else -> "$kc perangkat keyboard terbaca. Tombol terakhir: " + KeyRouter.lastKey
+            }
+            root.addView(kit.tx(ks, 11f, kit.muted), mp(kit.WRAP, kit.WRAP, 0, 2, 0, 0))
+        }
+        if (InputBackend.lastMsg.isNotEmpty()) {
+            root.addView(kit.tx("Terakhir: " + InputBackend.lastMsg, 10f, kit.muted),
+                mp(kit.WRAP, kit.WRAP, 0, 2, 0, 0))
+        }
 
         val row = LinearLayout(ctx)
         fun chip(label: String, m: Int) {
-            val on = if (m == InputBackend.ACC) !InputBackend.ready
-            else (InputBackend.ready && InputBackend.mode == m)
+            val on = ready && InputBackend.mode == m
             val lp = mp(0, kit.WRAP, 0, 0, 5, 0)
             lp.weight = 1f
             row.addView(btn(label, on) { pickMode(m) }, lp)
@@ -104,45 +106,36 @@ class KeymapMenu(
         chip("ROOT", InputBackend.ROOT)
         chip("SHIZUKU", InputBackend.SHIZUKU)
         chip("ADB", InputBackend.ADB)
-        chip("DASAR", InputBackend.ACC)
-        root.addView(row, mp(MATCH, kit.WRAP, 0, 0, 0, 0))
+        chip("STOP", InputBackend.ACC)
+        root.addView(row, mp(MATCH, kit.WRAP, 0, 10, 0, 0))
 
         root.addView(btn("🔗  Pairing lewat notifikasi", false) {
             hide()
-            ctx.startForegroundService(
-                Intent(ctx, PairService::class.java).setAction("START")
-            )
+            ctx.startForegroundService(Intent(ctx, PairService::class.java).setAction("START"))
             toast("Tarik layar ke bawah, tulis kode lewat notifikasi")
-        }, mp(MATCH, kit.WRAP, 0, 10, 0, 0))
+        }, mp(MATCH, kit.WRAP, 0, 8, 0, 0))
 
         root.addView(btn("✎  Atur tombol (Editor)", false) {
-            val s = TapService.instance
-            if (s == null) {
-                needAccessibility()
+            if (!InputBackend.ready) {
+                toast("Ketuk ADB dulu sampai aktif")
             } else {
                 hide()
-                s.openEditorExternal()
+                KeyRouter.openEditor()
             }
         }, mp(MATCH, kit.WRAP, 0, 8, 0, 0))
 
-        val on = svc?.isEnabled() ?: false
+        val on = KeyRouter.enabled
         root.addView(
             btn(if (on) "Keymap: NYALA (ketuk untuk mati)" else "Keymap: MATI (ketuk untuk nyala)", on) {
-                val t = TapService.instance
-                if (t == null) {
-                    needAccessibility()
-                } else {
-                    t.toggleEnabled()
-                    rebuild()
-                }
+                KeyRouter.enabled = !KeyRouter.enabled
+                rebuild()
             },
             mp(MATCH, kit.WRAP, 0, 8, 0, 0)
         )
-
-        if (svc == null) {
-            root.addView(btn("Buka pengaturan Aksesibilitas", false) { needAccessibility() },
-                mp(MATCH, kit.WRAP, 0, 8, 0, 0))
-        }
+        root.addView(kit.tx("F10 = editor, F9 = nyala/mati, Esc = tutup editor", 10f, kit.muted),
+            mp(kit.WRAP, kit.WRAP, 0, 6, 0, 0))
+        root.addView(btn("↻  Segarkan status", false) { rebuild() },
+            mp(MATCH, kit.WRAP, 0, 8, 0, 0))
         root.addView(btn("Tutup", false) { hide() }, mp(MATCH, kit.WRAP, 0, 8, 0, 0))
 
         val w = minOf(ctx.resources.displayMetrics.widthPixels - kit.dp(16), kit.dp(380))
