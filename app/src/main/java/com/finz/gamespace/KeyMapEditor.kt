@@ -12,7 +12,8 @@ import android.view.View
 class KeyMapEditor(
     ctx: Context,
     private val onTap: (Float, Float) -> Unit,
-    private val onClear: () -> Unit
+    private val onClear: () -> Unit,
+    private val onClose: () -> Unit = {}
 ) : View(ctx) {
 
     private var points: Map<Int, FloatArray> = emptyMap()
@@ -63,12 +64,19 @@ class KeyMapEditor(
         p.textSize = 11 * d
         c.drawText("Ketuk layar = taruh titik, lalu tekan tombol keyboard", width / 2f, 50 * d, p)
         c.drawText("Ketuk titik = hapus  |  F10 atau Esc = selesai", width / 2f, 68 * d, p)
+
         rect.set(width - 130 * d, 10 * d, width - 10 * d, 46 * d)
         p.color = 0xFFFF3B47.toInt()
         c.drawRoundRect(rect, 10 * d, 10 * d, p)
         p.color = Color.WHITE
         p.textSize = 12 * d
         c.drawText("Hapus semua", rect.centerX(), rect.centerY() + 4 * d, p)
+
+        rect.set(width - 250 * d, 10 * d, width - 140 * d, 46 * d)
+        p.color = 0xFF22E58B.toInt()
+        c.drawRoundRect(rect, 10 * d, 10 * d, p)
+        p.color = Color.BLACK
+        c.drawText("Selesai", rect.centerX(), rect.centerY() + 4 * d, p)
     }
 
     override fun onTouchEvent(e: MotionEvent): Boolean {
@@ -76,9 +84,15 @@ class KeyMapEditor(
             getLocationOnScreen(loc)
             val lx = e.rawX - loc[0]
             val ly = e.rawY - loc[1]
-            if (lx > width - 130 * d && ly < 50 * d) {
-                onClear()
-                return true
+            if (ly < 50 * d) {
+                if (lx > width - 130 * d) {
+                    onClear()
+                    return true
+                }
+                if (lx > width - 250 * d && lx < width - 140 * d) {
+                    onClose()
+                    return true
+                }
             }
             val r = KeyMapStore.real(context)
             onTap(e.rawX / r[0], e.rawY / r[1])
