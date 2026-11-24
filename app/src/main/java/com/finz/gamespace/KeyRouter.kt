@@ -1,6 +1,9 @@
 package com.finz.gamespace
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
 import android.graphics.PixelFormat
 import android.os.Build
 import android.os.Handler
@@ -23,17 +26,15 @@ object KeyRouter : EditorCtl {
     @Volatile
     var lastKey = "-"
 
-    private const val JID = 9
     private val ui = Handler(Looper.getMainLooper())
     private var app: Context? = null
     private var wm: WindowManager? = null
     private var editor: KeyMapEditor? = null
-    private var list: MutableList<KeyComp> = ArrayList()
+    private var saved: MutableList<KeyComp> = ArrayList()
+    private var draft: MutableList<KeyComp>? = null
+    private var isDirty = false
+    private var exitArmed = false
     private var cacheKey = ""
-    private val held = HashSet<Int>()
-    private val busy = HashSet<Int>()
-    private var joyOn = false
-    private var tapN = 0
     private var addType = -1
     private val pts = ArrayList<FloatArray>()
     private val keys = ArrayList<Int>()
@@ -42,6 +43,7 @@ object KeyRouter : EditorCtl {
         val c = ctx.applicationContext
         app = c
         wm = c.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        DotsOverlay.attach(c)
     }
 
     private fun label(code: Int) = KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")
@@ -51,22 +53,46 @@ object KeyRouter : EditorCtl {
         Toast.makeText(c, s, Toast.LENGTH_SHORT).show()
     }
 
-    private fun current(): MutableList<KeyComp> {
-        val c = app ?: return list
-        val r = KeyMapStore.real(c)
-        val key = "global" + (if (r[0] > r[1]) "_L" else "_P")
+    private fun runList(): MutableList<KeyComp> {
+        val c = app ?: return saved
+        val key = KeyMapStore.profileKey(c)
         if (key != cacheKey) {
-            list = KeyMapStore.load(c, key)
+            saved = KeyMapStore.load(c, key)
             cacheKey = key
-            resetFlow()
         }
-        return list
+        return saved
     }
 
-    private fun persist() {
+    private fun edit(): MutableList<KeyComp> = draft ?: runList()
+
+    private fun markDirty() {
+        isDirty = true
+        exitArmed = false
+    }
+
+    fun reload() {
+        cacheKey = ""
+        runList()
+        draft = if (editor != null) ArrayList(saved) else null
+        isDirty = false
+        resetFlow()
+        editor?.invalidate()
+    }
+
+    fun clearProfile() {
         val c = app ?: return
-        current()
-        KeyMapStore.save(c, cacheKey, list)
+        saved = ArrayList()
+        cacheKey = KeyMapStore.profileKey(c)
+        KeyMapStore.save(c, cacheKey, saved)
+        draft = if (editor != null) ArrayList() else null
+        isDirty = false
+        resetFlow()
+        editor?.invalidate()
+    }
+
+    fun switchEnabled(v: Boolean) {
+        enabled = v
+        KeyRunner.releaseAll()
     }
 
     private fun resetFlow() {
@@ -88,14 +114,13 @@ object KeyRouter : EditorCtl {
     }
 
     private fun handle(code: Int, isDown: Boolean) {
-        if (isDown) held.add(code) else held.remove(code)
+        KeyRunner.track(code, isDown)
         if (isDown && code == KeyEvent.KEYCODE_F10) {
-            if (editor == null) openEditor() else closeEditor()
+            if (editor == null) openEditor() else onExit()
             return
         }
         if (isDown && code == KeyEvent.KEYCODE_F9) {
-            enabled = !enabled
-            releaseAll()
+            switchEnabled(!enabled)
             say(if (enabled) "Keymap nyala" else "Keymap mati")
             return
         }
@@ -104,91 +129,8 @@ object KeyRouter : EditorCtl {
             return
         }
         if (!enabled) return
-        run(code, isDown)
-    }
-
-    private fun releaseAll() {
-        if (joyOn) {
-            InputBackend.up(JID)
-            joyOn = false
-        }
-        for (i in 0 until 10) InputBackend.up(10 + i)
-        held.clear()
-        busy.clear()
-    }
-
-    private fun run(code: Int, isDown: Boolean) {
         val c = app ?: return
-        val r = KeyMapStore.real(c)
-        val l = current()
-        for (i in l.indices) {
-            val k = l[i]
-            when (k.type) {
-                KeyComp.TOUCH ->
-                    if (isDown && k.keys[0] == code) tapAt(k.pts[0] * r[0], k.pts[1] * r[1])
-                KeyComp.HOLD ->
-                    if (k.keys[0] == code) {
-                        val id = 10 + i % 10
-                        if (isDown) InputBackend.down(id, k.pts[0] * r[0], k.pts[1] * r[1])
-                        else InputBackend.up(id)
-                    }
-                KeyComp.SWIPE ->
-                    if (isDown && k.keys[0] == code) swipe(i, k, r)
-                else ->
-                    if (k.keys.contains(code)) joystick(k, r)
-            }
-        }
-    }
-
-    private fun tapAt(x: Float, y: Float) {
-        val id = 20 + (tapN++ % 4)
-        InputBackend.down(id, x, y)
-        ui.postDelayed({ InputBackend.up(id) }, 40)
-    }
-
-    private fun swipe(i: Int, k: KeyComp, r: IntArray) {
-        if (!busy.add(k.keys[0])) return
-        val id = 10 + i % 10
-        val x1 = k.pts[0] * r[0]
-        val y1 = k.pts[1] * r[1]
-        val x2 = k.pts[2] * r[0]
-        val y2 = k.pts[3] * r[1]
-        InputBackend.down(id, x1, y1)
-        val n = 6
-        for (s in 1..n) {
-            ui.postDelayed({
-                InputBackend.move(id, x1 + (x2 - x1) * s / n, y1 + (y2 - y1) * s / n)
-            }, 25L * s)
-        }
-        ui.postDelayed({
-            InputBackend.up(id)
-            busy.remove(k.keys[0])
-        }, 25L * (n + 1))
-    }
-
-    private fun joystick(k: KeyComp, r: IntArray) {
-        var dx = 0f
-        var dy = 0f
-        if (held.contains(k.keys[0])) dy -= 1f
-        if (held.contains(k.keys[1])) dx -= 1f
-        if (held.contains(k.keys[2])) dy += 1f
-        if (held.contains(k.keys[3])) dx += 1f
-        val cx = k.pts[0] * r[0]
-        val cy = k.pts[1] * r[1]
-        val rad = k.pts[2] * min(r[0], r[1])
-        if (dx == 0f && dy == 0f) {
-            if (joyOn) {
-                InputBackend.up(JID)
-                joyOn = false
-            }
-            return
-        }
-        val n = if (dx != 0f && dy != 0f) 0.7071f else 1f
-        if (!joyOn) {
-            InputBackend.down(JID, cx, cy)
-            joyOn = true
-        }
-        InputBackend.move(JID, cx + dx * n * rad, cy + dy * n * rad)
+        KeyRunner.press(c, runList(), code, isDown)
     }
 
     // ---------- editor ----------
@@ -196,8 +138,10 @@ object KeyRouter : EditorCtl {
         val c = app ?: return
         val w = wm ?: return
         if (editor != null) return
-        releaseAll()
-        current()
+        KeyRunner.releaseAll()
+        draft = ArrayList(runList())
+        isDirty = false
+        exitArmed = false
         resetFlow()
         val v = KeyMapEditor(c, this)
         val p = WindowManager.LayoutParams(
@@ -217,11 +161,14 @@ object KeyRouter : EditorCtl {
         editor = v
     }
 
-    fun closeEditor() {
+    private fun closeEditor() {
         editor?.let { try { wm?.removeView(it) } catch (e: Exception) {} }
         editor = null
+        draft = null
+        isDirty = false
+        exitArmed = false
         resetFlow()
-        held.clear()
+        KeyRunner.releaseAll()
     }
 
     private fun needPts() = when (addType) {
@@ -231,18 +178,21 @@ object KeyRouter : EditorCtl {
 
     private fun needKeys() = if (addType == KeyComp.JOY) 4 else 1
 
-    override fun comps(): List<KeyComp> = current()
+    override fun comps(): List<KeyComp> = edit()
 
     override fun pending(): List<FloatArray> = pts
 
     override fun flowActive(): Boolean = addType >= 0
 
+    override fun dirty(): Boolean = isDirty
+
     override fun prompt(): String {
-        if (addType < 0) return "Ketuk Tambah untuk memilih komponen. Ketuk titik yang ada untuk menghapus."
+        if (exitArmed) return "Belum disimpan. Ketuk Keluar lagi untuk membuang perubahan."
+        if (addType < 0) return "Ketuk Tambah komponen. Ketuk titik yang ada untuk menghapusnya."
         if (pts.size < needPts()) {
             return when (addType) {
                 KeyComp.SWIPE ->
-                    if (pts.isEmpty()) "Ketuk titik AWAL swipe" else "Ketuk titik AKHIR swipe"
+                    if (pts.isEmpty()) "Ketuk titik AWAL geser" else "Ketuk titik AKHIR geser"
                 KeyComp.JOY ->
                     if (pts.isEmpty()) "Ketuk titik PUSAT joystick"
                     else "Ketuk titik TEPI joystick (menentukan jarak)"
@@ -250,7 +200,8 @@ object KeyRouter : EditorCtl {
             }
         }
         if (addType == KeyComp.JOY) {
-            return "Tekan tombol keyboard untuk " + arrayOf("ATAS", "KIRI", "BAWAH", "KANAN")[keys.size]
+            return "Tekan tombol keyboard untuk " +
+                arrayOf("ATAS", "KIRI", "BAWAH", "KANAN")[keys.size]
         }
         return "Tekan tombol keyboard untuk titik ini"
     }
@@ -268,15 +219,80 @@ object KeyRouter : EditorCtl {
     }
 
     override fun onClear() {
-        current().clear()
-        persist()
+        edit().clear()
+        markDirty()
         resetFlow()
-        say("Semua dihapus")
+        say("Semua dihapus (belum disimpan)")
         redraw()
     }
 
-    override fun onClose() {
+    override fun onExit() {
+        if (isDirty && !exitArmed) {
+            exitArmed = true
+            redraw()
+            return
+        }
         closeEditor()
+    }
+
+    override fun onSave() {
+        val c = app ?: return
+        val d = draft ?: return
+        cacheKey = KeyMapStore.profileKey(c)
+        KeyMapStore.save(c, cacheKey, d)
+        saved = ArrayList(d)
+        isDirty = false
+        exitArmed = false
+        say("Tersimpan")
+        redraw()
+    }
+
+    override fun onShare() {
+        exportToClipboard(false)
+    }
+
+    override fun onImport() {
+        val c = app ?: return
+        val w = wm ?: return
+        ImportPanel(c, w, OverlayKit(c)).show()
+    }
+
+    fun exportToClipboard(send: Boolean) {
+        val c = app ?: return
+        val text = KeyMapStore.export(edit())
+        try {
+            val cm = c.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("keymap", text))
+            say("Disalin ke clipboard")
+        } catch (e: Exception) {
+            say("Gagal menyalin")
+        }
+        if (send) {
+            try {
+                val i = Intent(Intent.ACTION_SEND)
+                i.type = "text/plain"
+                i.putExtra(Intent.EXTRA_TEXT, text)
+                val ch = Intent.createChooser(i, "Bagikan keymap")
+                ch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                c.startActivity(ch)
+            } catch (e: Exception) {
+            }
+        }
+    }
+
+    fun applyImport(text: String): String? {
+        val c = app ?: return "Belum siap"
+        val l = KeyMapStore.parseImport(text) ?: return "Teks keymap tidak valid"
+        if (editor != null) {
+            draft = l
+            markDirty()
+            resetFlow()
+            redraw()
+            return null
+        }
+        KeyMapStore.save(c, KeyMapStore.profileKey(c), l)
+        reload()
+        return null
     }
 
     private fun anchors(k: KeyComp): List<FloatArray> =
@@ -297,25 +313,25 @@ object KeyRouter : EditorCtl {
         }
         val r = KeyMapStore.real(c)
         val d = c.resources.displayMetrics.density
-        val l = current()
+        val l = edit()
         val idx = l.indexOfFirst { k ->
             anchors(k).any { hypot((it[0] - x) * r[0], (it[1] - y) * r[1]) < 28 * d }
         }
         if (idx >= 0) {
             l.removeAt(idx)
-            persist()
-            say("Dihapus")
+            markDirty()
+            say("Dihapus (belum disimpan)")
             redraw()
         }
     }
 
     private fun editorKey(code: Int) {
         if (code == KeyEvent.KEYCODE_ESCAPE) {
-            if (addType >= 0) onCancel() else closeEditor()
+            if (addType >= 0) onCancel() else onExit()
             return
         }
         if (addType < 0) {
-            say("Ketuk Tambah dulu")
+            say("Ketuk Tambah komponen dulu")
             return
         }
         if (pts.size < needPts()) {
@@ -344,12 +360,12 @@ object KeyRouter : EditorCtl {
             }
             else -> floatArrayOf(pts[0][0], pts[0][1])
         }
-        val l = current()
+        val l = edit()
         l.removeAll { k -> k.keys.any { ks.contains(it) } }
         l.add(KeyComp(addType, ks, fp))
-        persist()
+        markDirty()
         resetFlow()
-        say("Tersimpan")
+        say("Ditambahkan. Ketuk Simpan untuk menyimpan.")
         redraw()
     }
 }
