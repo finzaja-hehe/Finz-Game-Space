@@ -5,8 +5,12 @@ import android.view.InputDevice
 import android.view.InputEvent
 import android.view.MotionEvent
 import java.io.BufferedReader
+import java.io.File
+import java.io.FileInputStream
 import java.io.InputStreamReader
 import java.lang.reflect.Method
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 object InputServer {
 
@@ -16,6 +20,14 @@ object InputServer {
     private var downTime = 0L
     private var target: Any? = null
     private var inject: Method? = null
+    private val outLock = Any()
+
+    private fun emit(s: String) {
+        synchronized(outLock) {
+            System.out.println(s)
+            System.out.flush()
+        }
+    }
 
     private fun hook(cls: String) {
         val c = Class.forName(cls)
@@ -101,17 +113,80 @@ object InputServer {
         }
     }
 
+    private fun keyboardDevices(): List<String> {
+        val res = ArrayList<String>()
+        try {
+            val txt = File("/proc/bus/input/devices").readText()
+            for (block in txt.split("\n\n")) {
+                val h = block.lines().firstOrNull { it.startsWith("H: Handlers=") } ?: continue
+                if (!h.contains("kbd")) continue
+                for (tok in h.split(" ")) {
+                    if (tok.startsWith("event")) res.add("/dev/input/$tok")
+                }
+            }
+        } catch (e: Throwable) {
+        }
+        if (res.isEmpty()) {
+            val fs = File("/dev/input").listFiles()
+            if (fs != null) {
+                for (f in fs) {
+                    if (f.name.startsWith("event")) res.add(f.path)
+                }
+            }
+        }
+        return res
+    }
+
+    private fun watch(fin: FileInputStream) {
+        val t = Thread {
+            try {
+                val size = if (android.os.Process.is64Bit()) 24 else 16
+                val buf = ByteArray(size)
+                val bb = ByteBuffer.wrap(buf).order(ByteOrder.LITTLE_ENDIAN)
+                while (true) {
+                    var n = 0
+                    while (n < size) {
+                        val r = fin.read(buf, n, size - n)
+                        if (r < 0) return@Thread
+                        n += r
+                    }
+                    val off = size - 8
+                    val type = bb.getShort(off).toInt() and 0xFFFF
+                    val code = bb.getShort(off + 2).toInt() and 0xFFFF
+                    val value = bb.getInt(off + 4)
+                    if (type == 1 && (value == 0 || value == 1)) emit("K $code $value")
+                }
+            } catch (e: Throwable) {
+                emit("KERR ${e.message}")
+            }
+        }
+        t.isDaemon = true
+        t.start()
+    }
+
+    private fun startKeyboards() {
+        var ok = 0
+        for (p in keyboardDevices()) {
+            try {
+                watch(FileInputStream(p))
+                ok++
+            } catch (e: Throwable) {
+                emit("KERR $p ${e.message}")
+            }
+        }
+        emit("KBD $ok")
+    }
+
     @JvmStatic
     fun main(args: Array<String>) {
         try {
             setup()
-            System.out.println("READY")
-            System.out.flush()
+            emit("READY")
         } catch (e: Throwable) {
-            System.out.println("ERR $e")
-            System.out.flush()
+            emit("ERR $e")
             return
         }
+        startKeyboards()
         val r = BufferedReader(InputStreamReader(System.`in`))
         while (true) {
             val line = r.readLine() ?: break
@@ -121,5 +196,6 @@ object InputServer {
                 System.err.println("ERR $e")
             }
         }
+        System.exit(0)
     }
 }
