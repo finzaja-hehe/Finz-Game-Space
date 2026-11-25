@@ -1,9 +1,14 @@
 package com.finz.gamespace
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
+import android.media.MediaScannerConnection
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.widget.Toast
 import java.io.InputStream
 import java.io.OutputStream
@@ -44,6 +49,7 @@ object InputBackend {
     var recording = false
 
     private var recPath = ""
+    private var recStart = 0L
     private var appCtx: Context? = null
     private var pollSent = -1
     private var proc: Process? = null
@@ -99,6 +105,33 @@ object InputBackend {
         ui.post { Toast.makeText(c, s, Toast.LENGTH_LONG).show() }
     }
 
+    private fun notice(title: String, text: String) {
+        val c = appCtx ?: return
+        try {
+            val nm = c.getSystemService(NotificationManager::class.java)
+            nm.createNotificationChannel(
+                NotificationChannel("gsres", "Hasil", NotificationManager.IMPORTANCE_DEFAULT)
+            )
+            val n = Notification.Builder(c, "gsres")
+                .setSmallIcon(android.R.drawable.ic_dialog_info)
+                .setContentTitle(title)
+                .setContentText(text)
+                .setStyle(Notification.BigTextStyle().bigText(text))
+                .setAutoCancel(true)
+                .build()
+            nm.notify(77, n)
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun scan(path: String) {
+        val c = appCtx ?: return
+        try {
+            MediaScannerConnection.scanFile(c, arrayOf(path), null, null)
+        } catch (e: Exception) {
+        }
+    }
+
     private fun onLine(line: String) {
         val q = line.split(" ")
         when (q[0]) {
@@ -119,16 +152,35 @@ object InputBackend {
             "MSE" -> mouseCount = q.getOrNull(1)?.toIntOrNull() ?: -1
             "G" -> grabCount = q.getOrNull(1)?.toIntOrNull() ?: -1
             "KERR" -> kbdNote = line.removePrefix("KERR").trim()
-            "SHOT" -> toast("Foto layar tersimpan: " + line.removePrefix("SHOT").trim())
-            "SERR" -> toast("Gagal: " + line.removePrefix("SERR").trim())
+            "SHOT" -> {
+                val path = line.removePrefix("SHOT").trim()
+                toast("Foto layar tersimpan: $path")
+                notice("Foto layar tersimpan", path)
+                scan(path)
+            }
+            "SERR" -> {
+                val why = line.removePrefix("SERR").trim()
+                toast("Gagal: $why")
+                notice("Foto atau rekam layar gagal", why)
+            }
             "REC" -> {
                 if (q.getOrNull(1) == "1") {
                     recording = true
+                    recStart = SystemClock.elapsedRealtime()
                     recPath = line.removePrefix("REC 1").trim()
-                    toast("Merekam layar (maks 3 menit). Ketuk Rekam lagi untuk berhenti.")
+                    toast("Merekam layar (maks 3 menit). Buka panel lalu ketuk Rekam untuk berhenti.")
+                    notice("Merekam layar", "Buka panel F lalu ketuk Rekam untuk berhenti.")
                 } else {
                     recording = false
-                    toast("Rekaman tersimpan: $recPath")
+                    val dur = SystemClock.elapsedRealtime() - recStart
+                    if (dur < 2500) {
+                        toast("Rekam layar gagal: berhenti seketika. HP mungkin menolak merekam.")
+                        notice("Rekam layar gagal", "Perekaman berhenti seketika.")
+                    } else {
+                        toast("Rekaman tersimpan: $recPath")
+                        notice("Rekaman tersimpan", recPath)
+                        scan(recPath)
+                    }
                 }
             }
             else -> {}
