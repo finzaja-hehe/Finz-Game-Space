@@ -9,7 +9,12 @@ import android.graphics.RectF
 import android.view.View
 import android.widget.LinearLayout
 
-class HexButton(ctx: Context, icon0: String, private val label: String) : View(ctx) {
+class HexButton(
+    ctx: Context,
+    icon0: String,
+    private val label: String,
+    private val iconId: Int = -1
+) : View(ctx) {
 
     var icon = icon0
         set(v) {
@@ -53,13 +58,21 @@ class HexButton(ctx: Context, icon0: String, private val label: String) : View(c
         line.color = accent
         c.drawPath(path, line)
 
-        txt.textAlign = Paint.Align.CENTER
-        txt.isFakeBoldText = true
-        txt.color = if (active) Color.BLACK else Color.WHITE
-        txt.textSize = d(if (icon.firstOrNull()?.isDigit() == true) 13f else 16f)
-        val fm = txt.fontMetrics
-        c.drawText(icon, cx, cy - (fm.ascent + fm.descent) / 2f, txt)
+        val fg = if (active) Color.BLACK else Color.WHITE
+        if (iconId >= 0) {
+            HudIcons.draw(c, txt, iconId, cx, cy, d(26f), fg, d(1f))
+        } else {
+            txt.style = Paint.Style.FILL
+            txt.textAlign = Paint.Align.CENTER
+            txt.isFakeBoldText = true
+            txt.color = fg
+            txt.textSize = d(if (icon.firstOrNull()?.isDigit() == true) 13f else 16f)
+            val fm = txt.fontMetrics
+            c.drawText(icon, cx, cy - (fm.ascent + fm.descent) / 2f, txt)
+        }
 
+        txt.style = Paint.Style.FILL
+        txt.textAlign = Paint.Align.CENTER
         txt.isFakeBoldText = false
         txt.color = if (active) Color.WHITE else 0xFFB8C4D0.toInt()
         txt.textSize = d(8.5f)
