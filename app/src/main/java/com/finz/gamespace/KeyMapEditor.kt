@@ -1,385 +1,422 @@
 package com.finz.gamespace
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.DashPathEffect
-import android.graphics.Paint
-import android.graphics.RectF
+import android.content.Intent
+import android.graphics.PixelFormat
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.view.KeyEvent
-import android.view.MotionEvent
-import android.view.View
+import android.view.WindowManager
 import android.widget.Toast
-import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.cos
+import kotlin.math.hypot
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.sin
 
-interface EditorCtl {
-    fun comps(): List<KeyComp>
-    fun prompt(): String
-    fun pending(): List<FloatArray>
-    fun flowActive(): Boolean
-    fun dirty(): Boolean
-    fun onPick(type: Int)
-    fun onTap(x: Float, y: Float)
-    fun onCancel()
-    fun onClear()
-    fun onExit()
-    fun onSave()
-    fun onShare()
-    fun onImport()
-}
+object KeyRouter : EditorCtl {
 
-class KeyMapEditor(ctx: Context, private val ctl: EditorCtl) : View(ctx) {
+    @Volatile
+    var enabled = true
 
-    private val p = Paint(Paint.ANTI_ALIAS_FLAG)
-    private val box = RectF()
-    private val bar = RectF()
-    private val cellR = RectF()
-    private val vp = RectF()
-    private val loc = IntArray(2)
-    private val d = resources.displayMetrics.density
-    private var menuOpen = false
-    private var scroll = 0f
-    private var downY = 0f
-    private var lastY = 0f
-    private var moved = false
-    private val names = arrayOf(
-        "Sentuh", "Tahan", "Geser", "Joystick", "Grup tekan lama", "Bola mengambang",
-        "Gulir Mouse", "Tampilan FPS", "Lihat Bebas", "Pilih Mouse"
-    )
-    private val kinds = intArrayOf(0, 1, 2, 3, 4, 5, -1, -1, -1, -1)
-    private val colors = intArrayOf(
-        0xCC00E5A8.toInt(), 0xCCFF7A1A.toInt(), 0xCC2D9CFF.toInt(),
-        0xCCB46BFF.toInt(), 0xCCFF4FD8.toInt(), 0xCCFFFFFF.toInt()
-    )
+    @Volatile
+    var kbdCount = -1
 
-    private fun lab(code: Int) = KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")
+    @Volatile
+    var lastKey = "-"
 
-    private fun dot(c: Canvas, x: Float, y: Float, rad: Float, color: Int, text: String) {
-        p.style = Paint.Style.FILL
-        p.color = color
-        c.drawCircle(x, y, rad, p)
-        if (text.isNotEmpty()) {
-            p.color = Color.BLACK
-            p.textAlign = Paint.Align.CENTER
-            p.isFakeBoldText = true
-            p.textSize = 9 * d
-            c.drawText(text, x, y + 3 * d, p)
+    private val ui = Handler(Looper.getMainLooper())
+    private var app: Context? = null
+    private var wm: WindowManager? = null
+    private var editor: KeyMapEditor? = null
+    private var saved: MutableList<KeyComp> = ArrayList()
+    private var draft: MutableList<KeyComp>? = null
+    private var isDirty = false
+    private var exitArmed = false
+    private var cacheKey = ""
+    private var addType = -1
+    private val pts = ArrayList<FloatArray>()
+    private val keys = ArrayList<Int>()
+
+    fun attach(ctx: Context) {
+        val c = ctx.applicationContext
+        app = c
+        wm = c.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        DotsOverlay.attach(c)
+        syncBalls()
+    }
+
+    fun syncBalls() {
+        val c = app ?: return
+        if (editor != null) {
+            BallOverlay.hide()
+            return
+        }
+        BallOverlay.show(c, runList())
+    }
+
+    private fun label(code: Int) = KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")
+
+    private fun say(s: String) {
+        val c = app ?: return
+        Toast.makeText(c, s, Toast.LENGTH_SHORT).show()
+    }
+
+    private fun runList(): MutableList<KeyComp> {
+        val c = app ?: return saved
+        val key = KeyMapStore.profileKey(c)
+        if (key != cacheKey) {
+            saved = KeyMapStore.load(c, key)
+            cacheKey = key
+        }
+        return saved
+    }
+
+    private fun edit(): MutableList<KeyComp> = draft ?: runList()
+
+    private fun markDirty() {
+        isDirty = true
+        exitArmed = false
+    }
+
+    fun reload() {
+        cacheKey = ""
+        runList()
+        draft = if (editor != null) ArrayList(saved) else null
+        isDirty = false
+        resetFlow()
+        editor?.invalidate()
+        syncBalls()
+    }
+
+    fun clearProfile() {
+        val c = app ?: return
+        saved = ArrayList()
+        cacheKey = KeyMapStore.profileKey(c)
+        KeyMapStore.save(c, cacheKey, saved)
+        draft = if (editor != null) ArrayList() else null
+        isDirty = false
+        resetFlow()
+        editor?.invalidate()
+        syncBalls()
+    }
+
+    fun switchEnabled(v: Boolean) {
+        enabled = v
+        KeyRunner.releaseAll()
+    }
+
+    private fun resetFlow() {
+        addType = -1
+        pts.clear()
+        keys.clear()
+    }
+
+    private fun redraw() {
+        editor?.invalidate()
+    }
+
+    // ---------- tombol dari keyboard ----------
+    fun onKey(evdev: Int, isDown: Boolean) {
+        val code = EvdevMap.toAndroid(evdev)
+        if (code == 0) return
+        if (isDown) lastKey = label(code)
+        ui.post { handle(code, isDown) }
+    }
+
+    private fun handle(code: Int, isDown: Boolean) {
+        KeyRunner.track(code, isDown)
+        if (isDown && code == KeyEvent.KEYCODE_F10) {
+            if (editor == null) openEditor() else onExit()
+            return
+        }
+        if (isDown && code == KeyEvent.KEYCODE_F9) {
+            switchEnabled(!enabled)
+            say(if (enabled) "Keymap nyala" else "Keymap mati")
+            return
+        }
+        if (editor != null) {
+            if (isDown) editorKey(code)
+            return
+        }
+        if (!enabled) return
+        val c = app ?: return
+        KeyRunner.press(c, runList(), code, isDown)
+    }
+
+    // ---------- editor ----------
+    fun openEditor() {
+        val c = app ?: return
+        val w = wm ?: return
+        if (editor != null) return
+        KeyRunner.releaseAll()
+        draft = ArrayList(runList())
+        isDirty = false
+        exitArmed = false
+        resetFlow()
+        BallOverlay.hide()
+        val v = KeyMapEditor(c, this)
+        val p = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.MATCH_PARENT,
+            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
+                WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            PixelFormat.TRANSLUCENT
+        )
+        if (Build.VERSION.SDK_INT >= 28) {
+            p.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
+        w.addView(v, p)
+        editor = v
+    }
+
+    private fun closeEditor() {
+        editor?.let { try { wm?.removeView(it) } catch (e: Exception) {} }
+        editor = null
+        draft = null
+        isDirty = false
+        exitArmed = false
+        resetFlow()
+        KeyRunner.releaseAll()
+        syncBalls()
+    }
+
+    private fun needPts() = when (addType) {
+        KeyComp.SWIPE, KeyComp.JOY -> 2
+        else -> 1
+    }
+
+    private fun needKeys() = when (addType) {
+        KeyComp.JOY -> 4
+        KeyComp.BALL -> 0
+        else -> 1
+    }
+
+    override fun comps(): List<KeyComp> = edit()
+
+    override fun pending(): List<FloatArray> = pts
+
+    override fun flowActive(): Boolean = addType >= 0
+
+    override fun dirty(): Boolean = isDirty
+
+    override fun prompt(): String {
+        if (exitArmed) return "Belum disimpan. Ketuk Keluar lagi untuk membuang perubahan."
+        if (addType < 0) return "Ketuk Tambah komponen. Ketuk titik yang ada untuk menghapusnya."
+        if (pts.size < needPts()) {
+            return when (addType) {
+                KeyComp.SWIPE ->
+                    if (pts.isEmpty()) "Ketuk titik AWAL geser" else "Ketuk titik AKHIR geser"
+                KeyComp.JOY ->
+                    if (pts.isEmpty()) "Ketuk titik PUSAT joystick"
+                    else "Ketuk titik TEPI joystick (menentukan jarak)"
+                KeyComp.GROUP -> "Ketuk titik-titik (bisa banyak), lalu tekan tombol keyboard"
+                KeyComp.BALL -> "Ketuk posisi bola mengambang"
+                else -> "Ketuk titik di layar"
+            }
+        }
+        if (addType == KeyComp.JOY) {
+            return "Tekan tombol keyboard untuk " +
+                arrayOf("ATAS", "KIRI", "BAWAH", "KANAN")[keys.size]
+        }
+        if (addType == KeyComp.GROUP) {
+            return "${pts.size} titik. Ketuk titik lagi atau tekan tombol keyboard untuk menyelesaikan"
+        }
+        return "Tekan tombol keyboard untuk titik ini"
+    }
+
+    override fun onPick(type: Int) {
+        addType = type
+        pts.clear()
+        keys.clear()
+        redraw()
+    }
+
+    override fun onCancel() {
+        resetFlow()
+        redraw()
+    }
+
+    override fun onClear() {
+        edit().clear()
+        markDirty()
+        resetFlow()
+        say("Semua dihapus (belum disimpan)")
+        redraw()
+    }
+
+    override fun onExit() {
+        if (isDirty && !exitArmed) {
+            exitArmed = true
+            redraw()
+            return
+        }
+        closeEditor()
+    }
+
+    override fun onSave() {
+        val c = app ?: return
+        val d = draft ?: return
+        cacheKey = KeyMapStore.profileKey(c)
+        KeyMapStore.save(c, cacheKey, d)
+        saved = ArrayList(d)
+        isDirty = false
+        exitArmed = false
+        say("Tersimpan")
+        redraw()
+    }
+
+    override fun onShare() {
+        exportToClipboard(false)
+    }
+
+    override fun onImport() {
+        val c = app ?: return
+        val w = wm ?: return
+        ImportPanel(c, w, OverlayKit(c)).show()
+    }
+
+    fun exportToClipboard(send: Boolean) {
+        val c = app ?: return
+        val text = KeyMapStore.export(edit())
+        try {
+            val cm = c.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            cm.setPrimaryClip(ClipData.newPlainText("keymap", text))
+            say("Disalin ke clipboard")
+        } catch (e: Exception) {
+            say("Gagal menyalin")
+        }
+        if (send) {
+            try {
+                val i = Intent(Intent.ACTION_SEND)
+                i.type = "text/plain"
+                i.putExtra(Intent.EXTRA_TEXT, text)
+                val ch = Intent.createChooser(i, "Bagikan keymap")
+                ch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                c.startActivity(ch)
+            } catch (e: Exception) {
+            }
         }
     }
 
-    private fun ring(c: Canvas, x: Float, y: Float, rad: Float, color: Int) {
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 2.5f * d
-        p.color = color
-        c.drawCircle(x, y, rad, p)
+    fun applyImport(text: String): String? {
+        val c = app ?: return "Belum siap"
+        val l = KeyMapStore.parseImport(text) ?: return "Teks keymap tidak valid"
+        if (editor != null) {
+            draft = l
+            markDirty()
+            resetFlow()
+            redraw()
+            return null
+        }
+        KeyMapStore.save(c, KeyMapStore.profileKey(c), l)
+        reload()
+        return null
     }
 
-    private fun arrow(c: Canvas, x1: Float, y1: Float, x2: Float, y2: Float, col: Int) {
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 3 * d
-        p.color = col
-        c.drawLine(x1, y1, x2, y2, p)
-        val a = atan2(y2 - y1, x2 - x1)
-        val l = 14 * d
-        c.drawLine(x2, y2, x2 - l * cos(a - 0.5f), y2 - l * sin(a - 0.5f), p)
-        c.drawLine(x2, y2, x2 - l * cos(a + 0.5f), y2 - l * sin(a + 0.5f), p)
+    private fun anchors(k: KeyComp): List<FloatArray> {
+        if (k.type == KeyComp.SWIPE) {
+            return listOf(floatArrayOf(k.pts[0], k.pts[1]), floatArrayOf(k.pts[2], k.pts[3]))
+        }
+        if (k.type == KeyComp.GROUP) {
+            val out = ArrayList<FloatArray>()
+            var j = 0
+            while (j + 1 < k.pts.size) {
+                out.add(floatArrayOf(k.pts[j], k.pts[j + 1]))
+                j += 2
+            }
+            return out
+        }
+        return listOf(floatArrayOf(k.pts[0], k.pts[1]))
     }
 
-    private fun drawComp(c: Canvas, k: KeyComp, r: IntArray) {
-        val col = colors[k.type]
-        val x = k.pts[0] * r[0] - loc[0]
-        val y = k.pts[1] * r[1] - loc[1]
-        when (k.type) {
-            KeyComp.HOLD -> {
-                dot(c, x, y, 20 * d, col, lab(k.keys[0]))
-                ring(c, x, y, 28 * d, col)
-            }
-            KeyComp.SWIPE -> {
-                val x2 = k.pts[2] * r[0] - loc[0]
-                val y2 = k.pts[3] * r[1] - loc[1]
-                arrow(c, x, y, x2, y2, col)
-                dot(c, x, y, 20 * d, col, lab(k.keys[0]))
-            }
-            KeyComp.JOY -> {
-                val rad = k.pts[2] * min(r[0], r[1])
-                ring(c, x, y, rad, col)
-                dot(c, x, y, 5 * d, col, "")
-                dot(c, x, y - rad, 15 * d, col, lab(k.keys[0]))
-                dot(c, x - rad, y, 15 * d, col, lab(k.keys[1]))
-                dot(c, x, y + rad, 15 * d, col, lab(k.keys[2]))
-                dot(c, x + rad, y, 15 * d, col, lab(k.keys[3]))
-            }
-            KeyComp.GROUP -> {
-                p.style = Paint.Style.STROKE
-                p.strokeWidth = 2 * d
-                p.color = col
-                p.pathEffect = DashPathEffect(floatArrayOf(6 * d, 4 * d), 0f)
-                var px = x
-                var py = y
-                var i = 2
-                while (i + 1 < k.pts.size) {
-                    val nx = k.pts[i] * r[0] - loc[0]
-                    val ny = k.pts[i + 1] * r[1] - loc[1]
-                    c.drawLine(px, py, nx, ny, p)
-                    px = nx
-                    py = ny
-                    i += 2
+    override fun onTap(x: Float, y: Float) {
+        val c = app ?: return
+        if (addType >= 0) {
+            if (addType == KeyComp.GROUP) {
+                if (pts.size < 16) {
+                    pts.add(floatArrayOf(x, y))
+                    redraw()
                 }
-                p.pathEffect = null
-                var j = 0
-                while (j + 1 < k.pts.size) {
-                    dot(
-                        c, k.pts[j] * r[0] - loc[0], k.pts[j + 1] * r[1] - loc[1], 14 * d, col,
-                        if (j == 0) lab(k.keys[0]) else ""
-                    )
-                    j += 2
-                }
+                return
             }
-            KeyComp.BALL -> {
-                ring(c, x, y, 24 * d, col)
-                p.style = Paint.Style.FILL
-                p.color = Color.WHITE
-                p.textAlign = Paint.Align.CENTER
-                p.isFakeBoldText = true
-                p.textSize = 16 * d
-                c.drawText("F", x, y + 6 * d, p)
-            }
-            else -> dot(c, x, y, 22 * d, col, lab(k.keys[0]))
-        }
-    }
-
-    private fun barBox() {
-        val w = min(width - 24 * d, 400 * d)
-        val l = (width - w) / 2f
-        bar.set(l, 8 * d, l + w, 100 * d)
-    }
-
-    private fun barHit(x: Float, y: Float): Int {
-        barBox()
-        if (!bar.contains(x, y)) return -2
-        val rowH = bar.height() / 2f
-        if (y < bar.top + rowH) {
-            return ((x - bar.left) / (bar.width() / 3f)).toInt().coerceIn(0, 2)
-        }
-        return if (x < bar.centerX()) 3 else 4
-    }
-
-    private fun drawBar(c: Canvas) {
-        barBox()
-        p.style = Paint.Style.FILL
-        p.color = 0xF05B67F0.toInt()
-        c.drawRoundRect(bar, 16 * d, 16 * d, p)
-        val rowH = bar.height() / 2f
-        val third = bar.width() / 3f
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 1.5f * d
-        p.color = 0xCCFFFFFF.toInt()
-        p.pathEffect = DashPathEffect(floatArrayOf(4 * d, 3 * d), 0f)
-        c.drawLine(bar.left + 8 * d, bar.top + rowH, bar.right - 8 * d, bar.top + rowH, p)
-        c.drawLine(bar.left + third, bar.top + 6 * d, bar.left + third, bar.top + rowH - 6 * d, p)
-        c.drawLine(bar.left + 2 * third, bar.top + 6 * d, bar.left + 2 * third,
-            bar.top + rowH - 6 * d, p)
-        c.drawLine(bar.centerX(), bar.top + rowH + 6 * d, bar.centerX(), bar.bottom - 6 * d, p)
-        p.pathEffect = null
-        p.style = Paint.Style.FILL
-        p.color = Color.WHITE
-        p.textAlign = Paint.Align.CENTER
-        p.isFakeBoldText = false
-        p.textSize = 13 * d
-        val y1 = bar.top + rowH / 2f + 5 * d
-        val y2 = bar.top + rowH * 1.5f + 5 * d
-        c.drawText("Keluar", bar.left + third / 2f, y1, p)
-        c.drawText(if (ctl.flowActive()) "Batal" else "Tambah komponen",
-            bar.left + third * 1.5f, y1, p)
-        c.drawText(if (ctl.dirty()) "Simpan *" else "Simpan", bar.left + third * 2.5f, y1, p)
-        c.drawText("Bagikan", bar.left + bar.width() / 4f, y2, p)
-        c.drawText("Impor", bar.left + bar.width() * 3f / 4f, y2, p)
-    }
-
-    private fun menuBox() {
-        val bw = min(width - 32 * d, 480 * d)
-        val bh = min(height - 24 * d, 300 * d)
-        box.set((width - bw) / 2f, (height - bh) / 2f, (width + bw) / 2f, (height + bh) / 2f)
-        vp.set(box.left + 6 * d, box.top + 58 * d, box.right - 14 * d, box.bottom - 10 * d)
-    }
-
-    private fun gap() = 10 * d
-
-    private fun cellW() = (vp.width() - 5 * gap()) / 4f
-
-    private fun cellH() = 82 * d
-
-    private fun contentH(): Float {
-        val rows = (names.size + 3) / 4
-        return rows * (cellH() + gap()) + gap()
-    }
-
-    private fun maxScroll() = max(0f, contentH() - vp.height())
-
-    private fun cell(i: Int) {
-        val col = i % 4
-        val row = i / 4
-        val l = vp.left + gap() + col * (cellW() + gap())
-        val t = vp.top + gap() + row * (cellH() + gap()) - scroll
-        cellR.set(l, t, l + cellW(), t + cellH())
-    }
-
-    private fun drawMenu(c: Canvas) {
-        menuBox()
-        scroll = scroll.coerceIn(0f, maxScroll())
-        p.style = Paint.Style.FILL
-        p.color = 0xF2161A22.toInt()
-        c.drawRoundRect(box, 18 * d, 18 * d, p)
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 2 * d
-        p.color = 0xFF2D9CFF.toInt()
-        c.drawRoundRect(box, 18 * d, 18 * d, p)
-        p.style = Paint.Style.FILL
-        p.textAlign = Paint.Align.CENTER
-        p.isFakeBoldText = true
-        p.color = Color.WHITE
-        p.textSize = 16 * d
-        c.drawText("Tambah komponen", box.centerX(), box.top + 28 * d, p)
-        p.isFakeBoldText = false
-        p.color = 0xFF8B93A1.toInt()
-        p.textSize = 11 * d
-        c.drawText("Pilih komponen untuk ditempatkan pada keymap", box.centerX(),
-            box.top + 46 * d, p)
-        c.save()
-        c.clipRect(vp)
-        for (i in names.indices) {
-            cell(i)
-            val on = kinds[i] >= 0
-            p.style = Paint.Style.FILL
-            p.color = if (on) 0xFF1F2430.toInt() else 0xFF14171E.toInt()
-            c.drawRoundRect(cellR, 12 * d, 12 * d, p)
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 1.5f * d
-            p.color = if (on) 0xFF2D9CFF.toInt() else 0xFF2A2F3A.toInt()
-            c.drawRoundRect(cellR, 12 * d, 12 * d, p)
-            MenuIcons.draw(
-                c, p, i, cellR.centerX(), cellR.top + 30 * d, 34 * d,
-                if (on) Color.WHITE else 0xFF5A6070.toInt(), d
-            )
-            p.style = Paint.Style.FILL
-            p.color = if (on) Color.WHITE else 0xFF5A6070.toInt()
-            p.textAlign = Paint.Align.CENTER
-            p.isFakeBoldText = true
-            p.textSize = 10 * d
-            while (p.measureText(names[i]) > cellR.width() - 6 * d && p.textSize > 6 * d) {
-                p.textSize = p.textSize - 0.5f * d
-            }
-            c.drawText(names[i], cellR.centerX(), cellR.top + 62 * d, p)
-            p.isFakeBoldText = false
-            if (!on) {
-                p.textSize = 8 * d
-                c.drawText("segera", cellR.centerX(), cellR.top + 74 * d, p)
-            }
-        }
-        c.restore()
-        val ms = maxScroll()
-        if (ms > 0f) {
-            val th = vp.height() * vp.height() / contentH()
-            val ty = vp.top + (vp.height() - th) * (scroll / ms)
-            p.style = Paint.Style.FILL
-            p.color = 0x992D9CFF.toInt()
-            c.drawRoundRect(vp.right + 4 * d, ty, vp.right + 7 * d, ty + th, 3 * d, 3 * d, p)
-        }
-    }
-
-    override fun onDraw(c: Canvas) {
-        c.drawColor(0x77000000)
-        val r = KeyMapStore.real(context)
-        getLocationOnScreen(loc)
-        for (k in ctl.comps()) drawComp(c, k, r)
-        for (q in ctl.pending()) {
-            p.style = Paint.Style.STROKE
-            p.strokeWidth = 3 * d
-            p.color = Color.YELLOW
-            c.drawCircle(q[0] * r[0] - loc[0], q[1] * r[1] - loc[1], 22 * d, p)
-        }
-        drawBar(c)
-        p.style = Paint.Style.FILL
-        p.textAlign = Paint.Align.CENTER
-        p.isFakeBoldText = false
-        p.color = 0xFFFFE600.toInt()
-        p.textSize = 12 * d
-        c.drawText(ctl.prompt(), width / 2f, bar.bottom + 22 * d, p)
-        if (menuOpen) drawMenu(c)
-    }
-
-    private fun menuTap(lx: Float, ly: Float) {
-        menuBox()
-        if (vp.contains(lx, ly)) {
-            for (i in names.indices) {
-                cell(i)
-                if (cellR.contains(lx, ly)) {
-                    if (kinds[i] >= 0) {
-                        menuOpen = false
-                        ctl.onPick(kinds[i])
-                    } else {
-                        Toast.makeText(context, names[i] + ": tahap mouse (segera)",
-                            Toast.LENGTH_SHORT).show()
-                    }
-                    return
+            if (pts.size < needPts()) {
+                pts.add(floatArrayOf(x, y))
+                if (addType == KeyComp.BALL) {
+                    commit()
+                } else {
+                    redraw()
                 }
             }
             return
         }
-        if (!box.contains(lx, ly)) menuOpen = false
+        val r = KeyMapStore.real(c)
+        val d = c.resources.displayMetrics.density
+        val l = edit()
+        val idx = l.indexOfFirst { k ->
+            anchors(k).any { hypot((it[0] - x) * r[0], (it[1] - y) * r[1]) < 28 * d }
+        }
+        if (idx >= 0) {
+            l.removeAt(idx)
+            markDirty()
+            say("Dihapus (belum disimpan)")
+            redraw()
+        }
     }
 
-    override fun onTouchEvent(e: MotionEvent): Boolean {
-        getLocationOnScreen(loc)
-        val lx = e.rawX - loc[0]
-        val ly = e.rawY - loc[1]
-        if (menuOpen) {
-            menuBox()
-            when (e.action) {
-                MotionEvent.ACTION_DOWN -> {
-                    downY = ly
-                    lastY = ly
-                    moved = false
-                }
-                MotionEvent.ACTION_MOVE -> {
-                    if (abs(ly - downY) > 8 * d) moved = true
-                    if (moved) {
-                        scroll = (scroll - (ly - lastY)).coerceIn(0f, maxScroll())
-                        invalidate()
-                    }
-                    lastY = ly
-                }
-                MotionEvent.ACTION_UP -> {
-                    if (!moved) menuTap(lx, ly)
-                    invalidate()
-                }
-            }
-            return true
+    private fun editorKey(code: Int) {
+        if (code == KeyEvent.KEYCODE_ESCAPE) {
+            if (addType >= 0) onCancel() else onExit()
+            return
         }
-        if (e.action != MotionEvent.ACTION_UP) return true
-        val h = barHit(lx, ly)
-        if (h != -2) {
-            when (h) {
-                0 -> ctl.onExit()
-                1 -> if (ctl.flowActive()) ctl.onCancel() else {
-                    menuOpen = true
-                    scroll = 0f
-                }
-                2 -> ctl.onSave()
-                3 -> ctl.onShare()
-                else -> ctl.onImport()
-            }
-            invalidate()
-            return true
+        if (addType < 0) {
+            say("Ketuk Tambah komponen dulu")
+            return
         }
-        val r = KeyMapStore.real(context)
-        ctl.onTap(e.rawX / r[0], e.rawY / r[1])
-        invalidate()
-        return true
+        if (pts.size < needPts()) {
+            say("Ketuk layar dulu")
+            return
+        }
+        keys.add(code)
+        if (keys.size < needKeys()) {
+            redraw()
+            return
+        }
+        commit()
+    }
+
+    private fun commit() {
+        val c = app ?: return
+        val r = KeyMapStore.real(c)
+        val ks = keys.toIntArray()
+        val fp: FloatArray = when (addType) {
+            KeyComp.SWIPE -> floatArrayOf(pts[0][0], pts[0][1], pts[1][0], pts[1][1])
+            KeyComp.JOY -> {
+                val rad = hypot(
+                    (pts[1][0] - pts[0][0]) * r[0], (pts[1][1] - pts[0][1]) * r[1]
+                ) / min(r[0], r[1])
+                floatArrayOf(pts[0][0], pts[0][1], max(rad, 0.03f))
+            }
+            KeyComp.GROUP -> {
+                val a = FloatArray(pts.size * 2)
+                for (i in pts.indices) {
+                    a[i * 2] = pts[i][0]
+                    a[i * 2 + 1] = pts[i][1]
+                }
+                a
+            }
+            else -> floatArrayOf(pts[0][0], pts[0][1])
+        }
+        val l = edit()
+        l.removeAll { k -> k.keys.any { ks.contains(it) } }
+        l.add(KeyComp(addType, ks, fp))
+        markDirty()
+        resetFlow()
+        say("Ditambahkan. Ketuk Simpan untuk menyimpan.")
+        redraw()
     }
 }
