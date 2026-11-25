@@ -37,10 +37,10 @@ class HudPanel(
         return h
     }
 
-    private fun grid(a: List<HexButton>, b: List<HexButton>): LinearLayout {
+    private fun grid(rows: List<List<HexButton>>): LinearLayout {
         val g = LinearLayout(ctx)
         g.orientation = LinearLayout.VERTICAL
-        for (r in listOf(a, b)) {
+        for (r in rows) {
             val row = LinearLayout(ctx)
             r.forEach { row.addView(it) }
             g.addView(row)
@@ -52,16 +52,22 @@ class HudPanel(
         val acc = kit.accent
         root.accent = acc
         root.orientation = LinearLayout.VERTICAL
-        root.setPadding(kit.dp(26), kit.dp(14), kit.dp(26), kit.dp(12))
+        root.setPadding(kit.dp(24), kit.dp(12), kit.dp(24), kit.dp(10))
         gauge.accent = acc
 
         val left = grid(
-            listOf(hex("dnd", "🔕", "DND"), hex("keep", "💡", "Layar On"), hex("set", "⚙", "Setelan")),
-            listOf(hex("cross", "🎯", "Crosshair"), hex("hz", "60", "Refresh"), hex("keymap", "🎮", "Keymap"))
+            listOf(
+                listOf(hex("dnd", "🔕", "DND"), hex("keep", "💡", "Layar On")),
+                listOf(hex("cross", "🎯", "Crosshair"), hex("keymap", "🎮", "Keymap")),
+                listOf(hex("shot", "📷", "Foto"), hex("rec", "🎬", "Rekam"))
+            )
         )
         val right = grid(
-            listOf(hex("app", "↩", "Aplikasi"), hex("off", "⛔", "Matikan"), hex("turbo", "🚀", "Turbo")),
-            listOf(hex("mon", "📊", "Monitor"), hex("rot", "🔄", "Rotasi"), hex("close", "✕", "Tutup"))
+            listOf(
+                listOf(hex("app", "↩", "Aplikasi"), hex("off", "⛔", "Matikan")),
+                listOf(hex("turbo", "🚀", "Turbo"), hex("mon", "📊", "Monitor")),
+                listOf(hex("rot", "🔄", "Rotasi"), hex("close", "✕", "Tutup"))
+            )
         )
         val mid = LinearLayout(ctx)
         mid.orientation = LinearLayout.VERTICAL
@@ -83,14 +89,14 @@ class HudPanel(
         val sl = LinearLayout(ctx)
         sl.addView(
             kit.slider("☀", 5, 255, bright, 22) { act.setBrightness(it) },
-            LinearLayout.LayoutParams(0, kit.WRAP, 1f).apply { rightMargin = kit.dp(14) }
+            LinearLayout.LayoutParams(0, kit.WRAP, 1f).apply { rightMargin = kit.dp(10) }
         )
         sl.addView(
             kit.slider(
                 "🔊", 0, am.getStreamMaxVolume(AudioManager.STREAM_MUSIC),
                 am.getStreamVolume(AudioManager.STREAM_MUSIC), 22
             ) { am.setStreamVolume(AudioManager.STREAM_MUSIC, it, 0) },
-            LinearLayout.LayoutParams(0, kit.WRAP, 1f).apply { leftMargin = kit.dp(14) }
+            LinearLayout.LayoutParams(0, kit.WRAP, 1f).apply { leftMargin = kit.dp(10) }
         )
         root.addView(sl, LinearLayout.LayoutParams(-1, kit.WRAP))
     }
@@ -99,14 +105,10 @@ class HudPanel(
         btn[key]?.active = on
     }
 
-    fun setHz(hz: Int) {
-        btn["hz"]?.icon = "$hz"
-    }
-
     fun update(ram: Int, temp: Float, net: String, time: String) {
         gauge.set(ram, "$ram%", "RAM")
         jam.text = time
         mini.text = "%.1f°C · %s".format(temp, net)
-        mini2.text = "CPU ${SysInfo.cpuGhz()}  •  PING ${Ping.text()}"
+        mini2.text = "CPU ${SysInfo.cpuGhz()}\nPING ${Ping.text()}"
     }
 }
