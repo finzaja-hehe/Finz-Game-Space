@@ -9,13 +9,9 @@ import android.graphics.RectF
 import android.view.KeyEvent
 import android.view.MotionEvent
 import android.view.View
-import android.widget.Toast
 import kotlin.math.abs
-import kotlin.math.atan2
-import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
-import kotlin.math.sin
 
 interface EditorCtl {
     fun comps(): List<KeyComp>
@@ -61,12 +57,8 @@ class KeyMapEditor(ctx: Context, private val ctl: EditorCtl) : View(ctx) {
         "Sentuh", "Geser", "Gulir Mouse", "Joystick", "Tampilan FPS", "Lihat Bebas",
         "Pilih Mouse", "Grup tekan lama", "Tampilan bola mengambang", "Tahan"
     )
-    private val kinds = intArrayOf(0, 2, -1, 3, -1, -1, -1, 4, 5, 1)
+    private val kinds = intArrayOf(0, 2, 6, 3, 7, 8, 9, 4, 5, 1)
     private val iconIds = intArrayOf(0, 2, 6, 3, 7, 8, 9, 4, 5, 1)
-    private val colors = intArrayOf(
-        0xCC00E5A8.toInt(), 0xCCFF7A1A.toInt(), 0xCC2D9CFF.toInt(),
-        0xCCB46BFF.toInt(), 0xCCFF4FD8.toInt(), 0xCCFFFFFF.toInt()
-    )
     private val kc = ArrayList<Int>()
     private val kn = ArrayList<String>()
     private val help =
@@ -106,127 +98,17 @@ class KeyMapEditor(ctx: Context, private val ctl: EditorCtl) : View(ctx) {
         addKey(KeyEvent.KEYCODE_PERIOD, ".")
         addKey(KeyEvent.KEYCODE_SLASH, "/")
         addKey(KeyEvent.KEYCODE_GRAVE, "`")
+        addKey(1001, "Klik Kiri")
+        addKey(1002, "Klik Kanan")
+        addKey(1003, "Klik Tengah")
+        addKey(1004, "Mouse 4")
+        addKey(1005, "Mouse 5")
     }
-
-    private fun lab(code: Int): String =
-        if (code == 0) "?" else KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")
 
     private fun fit(c: Canvas, s: String, cx: Float, y: Float, size: Float, maxW: Float) {
         p.textSize = size
         while (p.measureText(s) > maxW && p.textSize > 7 * d) p.textSize = p.textSize - 0.5f * d
         c.drawText(s, cx, y, p)
-    }
-
-    private fun dot(c: Canvas, x: Float, y: Float, rad: Float, color: Int, text: String) {
-        p.style = Paint.Style.FILL
-        p.color = color
-        c.drawCircle(x, y, rad, p)
-        if (text.isNotEmpty()) {
-            p.color = Color.BLACK
-            p.textAlign = Paint.Align.CENTER
-            p.isFakeBoldText = true
-            p.textSize = 9 * d
-            c.drawText(text, x, y + 3 * d, p)
-        }
-    }
-
-    private fun ring(c: Canvas, x: Float, y: Float, rad: Float, color: Int) {
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 2.5f * d
-        p.color = color
-        c.drawCircle(x, y, rad, p)
-    }
-
-    private fun arrow(c: Canvas, x1: Float, y1: Float, x2: Float, y2: Float, col: Int) {
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 3 * d
-        p.color = col
-        c.drawLine(x1, y1, x2, y2, p)
-        val a = atan2(y2 - y1, x2 - x1)
-        val l = 14 * d
-        c.drawLine(x2, y2, x2 - l * cos(a - 0.5f), y2 - l * sin(a - 0.5f), p)
-        c.drawLine(x2, y2, x2 - l * cos(a + 0.5f), y2 - l * sin(a + 0.5f), p)
-    }
-
-    private fun drawComp(c: Canvas, k: KeyComp, r: IntArray) {
-        val col = colors[k.type]
-        val x = k.pts[0] * r[0] - loc[0]
-        val y = k.pts[1] * r[1] - loc[1]
-        when (k.type) {
-            KeyComp.HOLD -> {
-                dot(c, x, y, 20 * d, col, lab(k.keys[0]))
-                ring(c, x, y, 28 * d, col)
-            }
-            KeyComp.SWIPE -> {
-                val x2 = k.pts[2] * r[0] - loc[0]
-                val y2 = k.pts[3] * r[1] - loc[1]
-                arrow(c, x, y, x2, y2, col)
-                dot(c, x, y, 20 * d, col, lab(k.keys[0]))
-            }
-            KeyComp.JOY -> {
-                val rad = k.pts[2] * min(r[0], r[1])
-                ring(c, x, y, rad, col)
-                dot(c, x, y, 5 * d, col, "")
-                dot(c, x, y - rad, 15 * d, col, lab(k.keys[0]))
-                dot(c, x - rad, y, 15 * d, col, lab(k.keys[1]))
-                dot(c, x, y + rad, 15 * d, col, lab(k.keys[2]))
-                dot(c, x + rad, y, 15 * d, col, lab(k.keys[3]))
-            }
-            KeyComp.GROUP -> {
-                p.style = Paint.Style.STROKE
-                p.strokeWidth = 2 * d
-                p.color = col
-                p.pathEffect = DashPathEffect(floatArrayOf(6 * d, 4 * d), 0f)
-                var px = x
-                var py = y
-                var i = 2
-                while (i + 1 < k.pts.size) {
-                    val nx = k.pts[i] * r[0] - loc[0]
-                    val ny = k.pts[i + 1] * r[1] - loc[1]
-                    c.drawLine(px, py, nx, ny, p)
-                    px = nx
-                    py = ny
-                    i += 2
-                }
-                p.pathEffect = null
-                var j = 0
-                while (j + 1 < k.pts.size) {
-                    dot(
-                        c, k.pts[j] * r[0] - loc[0], k.pts[j + 1] * r[1] - loc[1], 14 * d, col,
-                        if (j == 0) lab(k.keys[0]) else ""
-                    )
-                    j += 2
-                }
-            }
-            KeyComp.BALL -> {
-                ring(c, x, y, 24 * d, col)
-                p.style = Paint.Style.FILL
-                p.color = Color.WHITE
-                p.textAlign = Paint.Align.CENTER
-                p.isFakeBoldText = true
-                p.textSize = 16 * d
-                c.drawText("F", x, y + 6 * d, p)
-            }
-            else -> dot(c, x, y, 22 * d, col, lab(k.keys[0]))
-        }
-    }
-
-    private fun highlight(c: Canvas, k: KeyComp, r: IntArray) {
-        p.style = Paint.Style.STROKE
-        p.strokeWidth = 3 * d
-        p.color = Color.YELLOW
-        if (k.type == KeyComp.JOY) {
-            val x = k.pts[0] * r[0] - loc[0]
-            val y = k.pts[1] * r[1] - loc[1]
-            c.drawCircle(x, y, k.pts[2] * min(r[0], r[1]) + 24 * d, p)
-            return
-        }
-        val n = if (k.type == KeyComp.SWIPE || k.type == KeyComp.GROUP) k.pts.size else 2
-        var j = 0
-        while (j + 1 < n) {
-            c.drawCircle(k.pts[j] * r[0] - loc[0], k.pts[j + 1] * r[1] - loc[1], 34 * d, p)
-            j += 2
-        }
     }
 
     // ---------- bar atas ----------
@@ -467,25 +349,18 @@ class KeyMapEditor(ctx: Context, private val ctl: EditorCtl) : View(ctx) {
         c.clipRect(vp)
         for (i in names.indices) {
             cell(i)
-            val on = kinds[i] >= 0
             p.style = Paint.Style.FILL
-            p.color = if (on) 0xFF111552.toInt() else 0xFF0E1140.toInt()
+            p.color = 0xFF111552.toInt()
             c.drawRoundRect(cellR, 8 * d, 8 * d, p)
-            glow(c, cellR, 8 * d, if (on) 0xFF3F5BFF.toInt() else 0xFF2A2F66.toInt(), 0.6f)
-            MenuIcons.draw(
-                c, p, iconIds[i], cellR.centerX(), cellR.top + 32 * d, 36 * d,
-                if (on) Color.WHITE else 0xFF5A6070.toInt(), d
-            )
+            glow(c, cellR, 8 * d, 0xFF3F5BFF.toInt(), 0.6f)
+            MenuIcons.draw(c, p, iconIds[i], cellR.centerX(), cellR.top + 32 * d, 36 * d,
+                Color.WHITE, d)
             p.style = Paint.Style.FILL
-            p.color = if (on) Color.WHITE else 0xFF5A6070.toInt()
+            p.color = Color.WHITE
             p.textAlign = Paint.Align.CENTER
             p.isFakeBoldText = false
             p.textSize = 11 * d
             label2(c, names[i], cellR.centerX(), cellR.top + 68 * d, cellR.width() - 6 * d)
-            if (!on) {
-                p.textSize = 8 * d
-                c.drawText("segera", cellR.centerX(), cellR.top + 82 * d, p)
-            }
         }
         c.restore()
         scrollbar(c)
@@ -522,8 +397,8 @@ class KeyMapEditor(ctx: Context, private val ctl: EditorCtl) : View(ctx) {
         val list = ctl.comps()
         val sel = ctl.selected()
         for (i in list.indices) {
-            drawComp(c, list[i], r)
-            if (i == sel) highlight(c, list[i], r)
+            CompDraw.draw(c, p, d, loc[0], loc[1], list[i], r)
+            if (i == sel) CompDraw.highlight(c, p, d, loc[0], loc[1], list[i], r)
         }
         for (q in ctl.pending()) {
             p.style = Paint.Style.STROKE
@@ -550,13 +425,8 @@ class KeyMapEditor(ctx: Context, private val ctl: EditorCtl) : View(ctx) {
             for (i in names.indices) {
                 cell(i)
                 if (cellR.contains(lx, ly)) {
-                    if (kinds[i] >= 0) {
-                        menuOpen = false
-                        ctl.onPick(kinds[i])
-                    } else {
-                        Toast.makeText(context, names[i] + ": tahap mouse (segera)",
-                            Toast.LENGTH_SHORT).show()
-                    }
+                    menuOpen = false
+                    ctl.onPick(kinds[i])
                     return
                 }
             }
