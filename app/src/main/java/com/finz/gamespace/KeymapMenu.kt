@@ -158,8 +158,9 @@ class KeymapMenu(
             ), mp(10)
         )
 
+        val muted = 0xFFB8BDFF.toInt()
         val st = if (ready) "Terhubung: ${InputBackend.name(InputBackend.mode)}" else "Terputus"
-        body.addView(kit.tx(st, 11f, 0xFFB8BDFF.toInt()), mp(12))
+        body.addView(kit.tx(st, 11f, muted), mp(12))
         if (ready) {
             val kc = KeyRouter.kbdCount
             val ks = when {
@@ -167,7 +168,15 @@ class KeymapMenu(
                 kc == 0 -> "Keyboard tidak terbaca " + InputBackend.kbdNote
                 else -> "Keyboard terbaca ($kc). Tombol terakhir: " + KeyRouter.lastKey
             }
-            body.addView(kit.tx(ks, 11f, 0xFFB8BDFF.toInt()), mp(2))
+            body.addView(kit.tx(ks, 11f, muted), mp(2))
+            val mc = InputBackend.mouseCount
+            val ms = when {
+                mc < 0 -> "Mencari mouse..."
+                mc == 0 -> "Mouse tidak terdeteksi"
+                else -> "Mouse terdeteksi ($mc), digenggam: " +
+                    (if (InputBackend.grabCount > 0) "ya" else "tidak")
+            }
+            body.addView(kit.tx(ms, 11f, muted), mp(2))
         }
         body.addView(
             kit.tx("F10 = editor, F9 = nyala/mati", 10f, 0xFF8B93C8.toInt()), mp(6)
