@@ -176,26 +176,43 @@ class OverlayService : Service() {
         bubble?.visibility = View.VISIBLE
     }
 
-    private fun needAdb(): Boolean {
-        if (InputBackend.ready) return false
-        Toast.makeText(this, "Sambungkan ADB dulu: Keymap > Sambung ADB", Toast.LENGTH_LONG).show()
-        return true
+    private fun withAdb(action: () -> Unit) {
+        if (InputBackend.ready) {
+            action()
+            return
+        }
+        hud?.setStatus("Menyambung ADB...")
+        Toast.makeText(this, "Menyambung ADB...", Toast.LENGTH_SHORT).show()
+        InputBackend.start(this, InputBackend.ADB) { ok, msg ->
+            if (ok) {
+                hud?.setStatus("")
+                action()
+            } else {
+                hud?.setStatus(msg)
+                Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     private fun doShot() {
-        if (needAdb()) return
-        closePanel()
-        handler.postDelayed({ InputBackend.shot() }, 500)
+        withAdb {
+            Toast.makeText(this, "Mengambil foto layar...", Toast.LENGTH_SHORT).show()
+            closePanel()
+            handler.postDelayed({ InputBackend.shot() }, 600)
+        }
     }
 
     private fun doRec() {
-        if (needAdb()) return
-        val starting = !InputBackend.recording
-        InputBackend.recToggle()
-        if (starting) {
-            closePanel()
-        } else {
+        if (InputBackend.recording) {
+            InputBackend.recToggle()
             hud?.active("rec", false)
+            hud?.setStatus("Menghentikan rekaman...")
+            return
+        }
+        withAdb {
+            InputBackend.recToggle()
+            Toast.makeText(this, "Mulai merekam layar...", Toast.LENGTH_SHORT).show()
+            closePanel()
         }
     }
 
