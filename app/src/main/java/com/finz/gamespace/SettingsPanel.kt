@@ -80,6 +80,12 @@ class SettingsPanel(
                 DotsOverlay.refresh()
             }, mp(4)
         )
+        body.addView(
+            kit.slider("Transp. bola", 20, 100, KeyMapStore.getInt(ctx, "ballalpha", 90), 90) {
+                KeyMapStore.putInt(ctx, "ballalpha", it)
+                KeyRouter.syncBalls()
+            }, mp(4)
+        )
 
         body.addView(section("Pengaturan Mouse"), mp(14))
         body.addView(
