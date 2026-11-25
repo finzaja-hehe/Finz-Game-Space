@@ -151,16 +151,16 @@ class OverlayService : Service() {
         cross.hidePanel(false)
         bubble?.visibility = View.GONE
         val h = HudPanel(this, kit, act) { onAction(it) }
-        h.setHz(refreshHz())
         h.active("dnd", act.dndOn())
         h.active("keep", keepOn)
         h.active("cross", getSharedPreferences("ch", MODE_PRIVATE).getBoolean("on", false))
         h.active("mon", mon != null)
+        h.active("rec", InputBackend.recording)
         h.active(
             "rot",
             Settings.System.getInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 1) == 1
         )
-        val w = minOf(resources.displayMetrics.widthPixels - kit.dp(16), kit.dp(540))
+        val w = minOf(resources.displayMetrics.widthPixels - kit.dp(16), kit.dp(400))
         val p = kit.lp(w, kit.WRAP, 0, kit.dp(4), Gravity.TOP or Gravity.CENTER_HORIZONTAL, keepOn)
         wm.addView(h.root, p)
         hud = h
@@ -176,16 +176,39 @@ class OverlayService : Service() {
         bubble?.visibility = View.VISIBLE
     }
 
+    private fun needAdb(): Boolean {
+        if (InputBackend.ready) return false
+        Toast.makeText(this, "Sambungkan ADB dulu: Keymap > Sambung ADB", Toast.LENGTH_LONG).show()
+        return true
+    }
+
+    private fun doShot() {
+        if (needAdb()) return
+        closePanel()
+        handler.postDelayed({ InputBackend.shot() }, 500)
+    }
+
+    private fun doRec() {
+        if (needAdb()) return
+        val starting = !InputBackend.recording
+        InputBackend.recToggle()
+        if (starting) {
+            closePanel()
+        } else {
+            hud?.active("rec", false)
+        }
+    }
+
     private fun onAction(key: String) {
         when (key) {
             "dnd" -> hud?.active("dnd", act.toggleDnd())
             "keep" -> toggleKeep()
-            "set" -> act.openSettings()
             "cross" -> {
                 closePanel()
                 cross.showPanel()
             }
-            "hz", "res" -> openDisplay()
+            "shot" -> doShot()
+            "rec" -> doRec()
             "app" -> startActivity(
                 Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
@@ -195,15 +218,6 @@ class OverlayService : Service() {
             "rot" -> toggleRotate()
             "close" -> closePanel()
         }
-    }
-
-    private fun refreshHz(): Int =
-        try { wm.defaultDisplay.refreshRate.toInt() } catch (e: Exception) { 60 }
-
-    private fun openDisplay() {
-        startActivity(
-            Intent(Settings.ACTION_DISPLAY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        )
     }
 
     private fun needWrite(): Boolean {
@@ -274,6 +288,7 @@ class OverlayService : Service() {
         val net = act.netText()
         val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
         hud?.update(ram, temp, net, time)
+        hud?.active("rec", InputBackend.recording)
         mon?.text = String.format(
             "RAM %d%%  |  %.1f°C  |  BAT %d%%  |  %s  |  CPU %s  |  %s",
             ram, temp, act.batPct(), net, SysInfo.cpuGhz(), Ping.text()
