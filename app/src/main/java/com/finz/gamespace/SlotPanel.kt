@@ -59,7 +59,7 @@ class SlotPanel(
             background = kit.box(0xF012151C.toInt(), 20, kit.accent, 1)
             setPadding(kit.dp(14), kit.dp(12), kit.dp(14), kit.dp(12))
         }
-        root.addView(kit.tx("📁 KONFIGURASI KEYMAP", 13f, Color.WHITE, true))
+        root.addView(kit.tx("KONFIGURASI KEYMAP", 13f, Color.WHITE, true))
         root.addView(
             kit.tx("Profil terpisah untuk tiap orientasi ($orient).", 11f, kit.muted), mp(4)
         )
@@ -133,7 +133,7 @@ class ImportPanel(
             background = kit.box(0xF012151C.toInt(), 20, kit.accent, 1)
             setPadding(kit.dp(14), kit.dp(12), kit.dp(14), kit.dp(12))
         }
-        root.addView(kit.tx("📥 IMPOR KEYMAP", 13f, Color.WHITE, true))
+        root.addView(kit.tx("IMPOR KEYMAP", 13f, Color.WHITE, true))
         root.addView(
             kit.tx("Tekan lama di kotak, pilih Tempel, lalu ketuk Impor.", 11f, kit.muted), mp(4)
         )
