@@ -10,6 +10,8 @@ class KeyComp(val type: Int, val keys: IntArray, val pts: FloatArray) {
         const val HOLD = 1
         const val SWIPE = 2
         const val JOY = 3
+        const val GROUP = 4
+        const val BALL = 5
     }
 }
 
@@ -68,6 +70,8 @@ object KeyMapStore {
                 0, 1 -> ks.size == 1 && ps.size == 2
                 2 -> ks.size == 1 && ps.size == 4
                 3 -> ks.size == 4 && ps.size == 3
+                4 -> ks.size == 1 && ps.size >= 2 && ps.size % 2 == 0
+                5 -> ks.isEmpty() && ps.size == 2
                 else -> false
             }
             if (ok) out.add(KeyComp(t, ks, ps))
