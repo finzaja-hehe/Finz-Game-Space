@@ -42,6 +42,11 @@ object EvdevMap {
         m[51] = 55
         m[52] = 56
         m[53] = 76
+        m[272] = 1001
+        m[273] = 1002
+        m[274] = 1003
+        m[275] = 1004
+        m[276] = 1005
     }
 
     fun toAndroid(code: Int): Int = m[code] ?: 0
