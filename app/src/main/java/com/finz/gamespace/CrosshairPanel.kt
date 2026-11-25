@@ -113,7 +113,7 @@ class CrosshairPanel(
         }
 
         val head = LinearLayout(ctx).apply { gravity = Gravity.CENTER_VERTICAL }
-        head.addView(kit.tx("🎯 CROSSHAIR", 12f, Color.WHITE, true),
+        head.addView(kit.tx("CROSSHAIR", 12f, Color.WHITE, true),
             LinearLayout.LayoutParams(0, kit.WRAP, 1f))
         val onBtn = kit.tx("", 11f, Color.WHITE, true).apply {
             gravity = Gravity.CENTER
