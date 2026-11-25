@@ -44,6 +44,16 @@ object KeyRouter : EditorCtl {
         app = c
         wm = c.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         DotsOverlay.attach(c)
+        syncBalls()
+    }
+
+    fun syncBalls() {
+        val c = app ?: return
+        if (editor != null) {
+            BallOverlay.hide()
+            return
+        }
+        BallOverlay.show(c, runList())
     }
 
     private fun label(code: Int) = KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")
@@ -77,6 +87,7 @@ object KeyRouter : EditorCtl {
         isDirty = false
         resetFlow()
         editor?.invalidate()
+        syncBalls()
     }
 
     fun clearProfile() {
@@ -88,6 +99,7 @@ object KeyRouter : EditorCtl {
         isDirty = false
         resetFlow()
         editor?.invalidate()
+        syncBalls()
     }
 
     fun switchEnabled(v: Boolean) {
@@ -143,6 +155,7 @@ object KeyRouter : EditorCtl {
         isDirty = false
         exitArmed = false
         resetFlow()
+        BallOverlay.hide()
         val v = KeyMapEditor(c, this)
         val p = WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
@@ -169,6 +182,7 @@ object KeyRouter : EditorCtl {
         exitArmed = false
         resetFlow()
         KeyRunner.releaseAll()
+        syncBalls()
     }
 
     private fun needPts() = when (addType) {
@@ -176,7 +190,11 @@ object KeyRouter : EditorCtl {
         else -> 1
     }
 
-    private fun needKeys() = if (addType == KeyComp.JOY) 4 else 1
+    private fun needKeys() = when (addType) {
+        KeyComp.JOY -> 4
+        KeyComp.BALL -> 0
+        else -> 1
+    }
 
     override fun comps(): List<KeyComp> = edit()
 
@@ -196,12 +214,17 @@ object KeyRouter : EditorCtl {
                 KeyComp.JOY ->
                     if (pts.isEmpty()) "Ketuk titik PUSAT joystick"
                     else "Ketuk titik TEPI joystick (menentukan jarak)"
+                KeyComp.GROUP -> "Ketuk titik-titik (bisa banyak), lalu tekan tombol keyboard"
+                KeyComp.BALL -> "Ketuk posisi bola mengambang"
                 else -> "Ketuk titik di layar"
             }
         }
         if (addType == KeyComp.JOY) {
             return "Tekan tombol keyboard untuk " +
                 arrayOf("ATAS", "KIRI", "BAWAH", "KANAN")[keys.size]
+        }
+        if (addType == KeyComp.GROUP) {
+            return "${pts.size} titik. Ketuk titik lagi atau tekan tombol keyboard untuk menyelesaikan"
         }
         return "Tekan tombol keyboard untuk titik ini"
     }
@@ -295,19 +318,39 @@ object KeyRouter : EditorCtl {
         return null
     }
 
-    private fun anchors(k: KeyComp): List<FloatArray> =
+    private fun anchors(k: KeyComp): List<FloatArray> {
         if (k.type == KeyComp.SWIPE) {
-            listOf(floatArrayOf(k.pts[0], k.pts[1]), floatArrayOf(k.pts[2], k.pts[3]))
-        } else {
-            listOf(floatArrayOf(k.pts[0], k.pts[1]))
+            return listOf(floatArrayOf(k.pts[0], k.pts[1]), floatArrayOf(k.pts[2], k.pts[3]))
         }
+        if (k.type == KeyComp.GROUP) {
+            val out = ArrayList<FloatArray>()
+            var j = 0
+            while (j + 1 < k.pts.size) {
+                out.add(floatArrayOf(k.pts[j], k.pts[j + 1]))
+                j += 2
+            }
+            return out
+        }
+        return listOf(floatArrayOf(k.pts[0], k.pts[1]))
+    }
 
     override fun onTap(x: Float, y: Float) {
         val c = app ?: return
         if (addType >= 0) {
+            if (addType == KeyComp.GROUP) {
+                if (pts.size < 16) {
+                    pts.add(floatArrayOf(x, y))
+                    redraw()
+                }
+                return
+            }
             if (pts.size < needPts()) {
                 pts.add(floatArrayOf(x, y))
-                redraw()
+                if (addType == KeyComp.BALL) {
+                    commit()
+                } else {
+                    redraw()
+                }
             }
             return
         }
@@ -357,6 +400,14 @@ object KeyRouter : EditorCtl {
                     (pts[1][0] - pts[0][0]) * r[0], (pts[1][1] - pts[0][1]) * r[1]
                 ) / min(r[0], r[1])
                 floatArrayOf(pts[0][0], pts[0][1], max(rad, 0.03f))
+            }
+            KeyComp.GROUP -> {
+                val a = FloatArray(pts.size * 2)
+                for (i in pts.indices) {
+                    a[i * 2] = pts[i][0]
+                    a[i * 2 + 1] = pts[i][1]
+                }
+                a
             }
             else -> floatArrayOf(pts[0][0], pts[0][1])
         }
