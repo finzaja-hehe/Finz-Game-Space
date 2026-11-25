@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.Looper
+import android.widget.Toast
 import java.io.InputStream
 import java.io.OutputStream
 import java.util.concurrent.CountDownLatch
@@ -33,6 +34,18 @@ object InputBackend {
     @Volatile
     var kbdNote = ""
 
+    @Volatile
+    var mouseCount = -1
+
+    @Volatile
+    var grabCount = -1
+
+    @Volatile
+    var recording = false
+
+    private var recPath = ""
+    private var appCtx: Context? = null
+    private var pollSent = -1
     private var proc: Process? = null
     private var out: OutputStream? = null
     private var closer: (() -> Unit)? = null
@@ -54,6 +67,9 @@ object InputBackend {
     fun stop() {
         ready = false
         mode = ACC
+        recording = false
+        mouseCount = -1
+        grabCount = -1
         KeyRouter.kbdCount = -1
         try { out?.close() } catch (e: Exception) {}
         try { proc?.destroy() } catch (e: Exception) {}
@@ -78,9 +94,52 @@ object InputBackend {
         }
     }
 
+    private fun toast(s: String) {
+        val c = appCtx ?: return
+        ui.post { Toast.makeText(c, s, Toast.LENGTH_LONG).show() }
+    }
+
+    private fun onLine(line: String) {
+        val q = line.split(" ")
+        when (q[0]) {
+            "K" -> if (q.size >= 3) {
+                val c = q[1].toIntOrNull()
+                if (c != null) KeyRouter.onKey(c, q[2] == "1")
+            }
+            "R" -> if (q.size >= 3) {
+                val a = q[1].toIntOrNull()
+                val b = q[2].toIntOrNull()
+                if (a != null && b != null) MouseRunner.rel(a, b)
+            }
+            "W" -> if (q.size >= 2) {
+                val a = q[1].toIntOrNull()
+                if (a != null) MouseRunner.wheel(a)
+            }
+            "KBD" -> KeyRouter.kbdCount = q.getOrNull(1)?.toIntOrNull() ?: -1
+            "MSE" -> mouseCount = q.getOrNull(1)?.toIntOrNull() ?: -1
+            "G" -> grabCount = q.getOrNull(1)?.toIntOrNull() ?: -1
+            "KERR" -> kbdNote = line.removePrefix("KERR").trim()
+            "SHOT" -> toast("Foto layar tersimpan: " + line.removePrefix("SHOT").trim())
+            "SERR" -> toast("Gagal: " + line.removePrefix("SERR").trim())
+            "REC" -> {
+                if (q.getOrNull(1) == "1") {
+                    recording = true
+                    recPath = line.removePrefix("REC 1").trim()
+                    toast("Merekam layar (maks 3 menit). Ketuk Rekam lagi untuk berhenti.")
+                } else {
+                    recording = false
+                    toast("Rekaman tersimpan: $recPath")
+                }
+            }
+            else -> {}
+        }
+    }
+
     private fun launch(app: Context, m: Int): String {
+        appCtx = app
         KeyRouter.attach(app)
         kbdNote = ""
+        pollSent = -1
         val cmd = "CLASSPATH='" + app.packageCodePath +
             "' exec app_process /system/bin com.finz.gamespace.InputServer"
         val inp: InputStream
@@ -131,16 +190,8 @@ object InputBackend {
                             result.set(line)
                             latch.countDown()
                         }
-                    } else if (line.startsWith("K ")) {
-                        val q = line.split(" ")
-                        if (q.size >= 3) {
-                            val c = q[1].toIntOrNull()
-                            if (c != null) KeyRouter.onKey(c, q[2] == "1")
-                        }
-                    } else if (line.startsWith("KBD ")) {
-                        KeyRouter.kbdCount = line.substring(4).trim().toIntOrNull() ?: -1
-                    } else if (line.startsWith("KERR")) {
-                        kbdNote = line.substring(4).trim()
+                    } else {
+                        onLine(line)
                     }
                     line = rd.readLine()
                 }
@@ -159,6 +210,10 @@ object InputBackend {
         if (f == "READY") {
             ready = true
             mode = m
+            ui.post {
+                setPoll()
+                KeyRouter.syncMouse()
+            }
             return "Mode ${name(m)} aktif"
         }
         stop()
@@ -177,6 +232,34 @@ object InputBackend {
                 ready = false
             }
         }
+    }
+
+    fun setPoll() {
+        val c = appCtx ?: return
+        val ms = when (KeyMapStore.getInt(c, "mpoll", 1)) {
+            0 -> 8
+            1 -> 4
+            2 -> 2
+            else -> 1
+        }
+        if (ms != pollSent && ready) {
+            pollSent = ms
+            send("p $ms")
+        }
+    }
+
+    fun grab(on: Boolean) {
+        if (!ready) return
+        setPoll()
+        send(if (on) "g 1" else "g 0")
+    }
+
+    fun shot() {
+        if (ready) send("s")
+    }
+
+    fun recToggle() {
+        if (ready) send(if (recording) "e" else "r")
     }
 
     fun down(id: Int, x: Float, y: Float) = send("d $id ${x.toInt()} ${y.toInt()}")
