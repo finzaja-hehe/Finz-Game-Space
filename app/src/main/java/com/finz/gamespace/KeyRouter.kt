@@ -36,8 +36,9 @@ object KeyRouter : EditorCtl {
     private var exitArmed = false
     private var cacheKey = ""
     private var addType = -1
+    private var selIdx = -1
+    private var slot = 0
     private val pts = ArrayList<FloatArray>()
-    private val keys = ArrayList<Int>()
 
     fun attach(ctx: Context) {
         val c = ctx.applicationContext
@@ -109,8 +110,9 @@ object KeyRouter : EditorCtl {
 
     private fun resetFlow() {
         addType = -1
+        selIdx = -1
+        slot = 0
         pts.clear()
-        keys.clear()
     }
 
     private fun redraw() {
@@ -196,6 +198,10 @@ object KeyRouter : EditorCtl {
         else -> 1
     }
 
+    private fun validSel(): Boolean = selIdx >= 0 && selIdx < edit().size
+
+    private fun selComp(): KeyComp? = if (validSel()) edit()[selIdx] else null
+
     override fun comps(): List<KeyComp> = edit()
 
     override fun pending(): List<FloatArray> = pts
@@ -204,35 +210,48 @@ object KeyRouter : EditorCtl {
 
     override fun dirty(): Boolean = isDirty
 
+    override fun selected(): Int = if (validSel()) selIdx else -1
+
+    override fun slotName(): String {
+        val k = selComp() ?: return ""
+        if (k.type != KeyComp.JOY) return ""
+        return arrayOf("ATAS", "KIRI", "BAWAH", "KANAN")[slot.coerceIn(0, 3)]
+    }
+
+    override fun canFinish(): Boolean = addType == KeyComp.GROUP && pts.isNotEmpty()
+
     override fun prompt(): String {
         if (exitArmed) return "Belum disimpan. Ketuk Keluar lagi untuk membuang perubahan."
-        if (addType < 0) return "Ketuk Tambah komponen. Ketuk titik yang ada untuk menghapusnya."
-        if (pts.size < needPts()) {
+        if (addType >= 0) {
             return when (addType) {
                 KeyComp.SWIPE ->
                     if (pts.isEmpty()) "Ketuk titik AWAL geser" else "Ketuk titik AKHIR geser"
                 KeyComp.JOY ->
                     if (pts.isEmpty()) "Ketuk titik PUSAT joystick"
                     else "Ketuk titik TEPI joystick (menentukan jarak)"
-                KeyComp.GROUP -> "Ketuk titik-titik (bisa banyak), lalu tekan tombol keyboard"
+                KeyComp.GROUP ->
+                    if (pts.isEmpty()) "Ketuk titik-titik (bisa banyak), lalu ketuk Selesai titik"
+                    else "${pts.size} titik. Ketuk titik lagi, atau ketuk Selesai titik"
                 KeyComp.BALL -> "Ketuk posisi bola mengambang"
                 else -> "Ketuk titik di layar"
             }
         }
-        if (addType == KeyComp.JOY) {
-            return "Tekan tombol keyboard untuk " +
-                arrayOf("ATAS", "KIRI", "BAWAH", "KANAN")[keys.size]
+        val k = selComp()
+        if (k != null) {
+            if (k.keys.isEmpty()) return "Komponen dipilih. Bola tidak butuh tombol."
+            val sn = slotName()
+            val unset = k.keys.any { it == 0 }
+            return (if (unset) "Belum ada tombol" else "Tombol terpasang") +
+                (if (sn.isNotEmpty()) " untuk $sn" else "") +
+                ". Ketuk Pilih tombol, atau tekan tombol di keyboard."
         }
-        if (addType == KeyComp.GROUP) {
-            return "${pts.size} titik. Ketuk titik lagi atau tekan tombol keyboard untuk menyelesaikan"
-        }
-        return "Tekan tombol keyboard untuk titik ini"
+        return "Ketuk Tambah komponen. Ketuk komponen yang ada untuk mengatur tombolnya."
     }
 
     override fun onPick(type: Int) {
         addType = type
+        selIdx = -1
         pts.clear()
-        keys.clear()
         redraw()
     }
 
@@ -278,6 +297,60 @@ object KeyRouter : EditorCtl {
         val c = app ?: return
         val w = wm ?: return
         ImportPanel(c, w, OverlayKit(c)).show()
+    }
+
+    override fun onFinish() {
+        if (canFinish()) commit()
+    }
+
+    override fun onDelete() {
+        if (!validSel()) return
+        edit().removeAt(selIdx)
+        selIdx = -1
+        markDirty()
+        say("Dihapus (belum disimpan)")
+        redraw()
+    }
+
+    override fun onDeselect() {
+        selIdx = -1
+        redraw()
+    }
+
+    override fun onPickKey(): Boolean {
+        val k = selComp() ?: return false
+        if (k.keys.isEmpty()) {
+            say("Komponen ini tidak butuh tombol")
+            return false
+        }
+        return true
+    }
+
+    override fun onAssign(code: Int) {
+        assign(code)
+    }
+
+    private fun assign(code: Int) {
+        val k = selComp() ?: return
+        if (k.keys.isEmpty()) return
+        val l = edit()
+        for (i in l.indices) {
+            if (i == selIdx) continue
+            val o = l[i]
+            for (j in o.keys.indices) {
+                if (o.keys[j] == code) o.keys[j] = 0
+            }
+        }
+        val s = slot.coerceIn(0, k.keys.size - 1)
+        for (j in k.keys.indices) {
+            if (j != s && k.keys[j] == code) k.keys[j] = 0
+        }
+        k.keys[s] = code
+        val nm = if (k.type == KeyComp.JOY) arrayOf("ATAS", "KIRI", "BAWAH", "KANAN")[s] + " = " else ""
+        say(nm + label(code))
+        slot = (s + 1) % k.keys.size
+        markDirty()
+        redraw()
     }
 
     fun exportToClipboard(send: Boolean) {
@@ -346,11 +419,7 @@ object KeyRouter : EditorCtl {
             }
             if (pts.size < needPts()) {
                 pts.add(floatArrayOf(x, y))
-                if (addType == KeyComp.BALL) {
-                    commit()
-                } else {
-                    redraw()
-                }
+                if (pts.size >= needPts()) commit() else redraw()
             }
             return
         }
@@ -358,41 +427,45 @@ object KeyRouter : EditorCtl {
         val d = c.resources.displayMetrics.density
         val l = edit()
         val idx = l.indexOfFirst { k ->
-            anchors(k).any { hypot((it[0] - x) * r[0], (it[1] - y) * r[1]) < 28 * d }
+            anchors(k).any { hypot((it[0] - x) * r[0], (it[1] - y) * r[1]) < 30 * d }
         }
         if (idx >= 0) {
-            l.removeAt(idx)
-            markDirty()
-            say("Dihapus (belum disimpan)")
-            redraw()
+            selIdx = idx
+            val e = l[idx].keys.indexOfFirst { it == 0 }
+            slot = if (e < 0) 0 else e
+        } else {
+            selIdx = -1
         }
+        redraw()
     }
 
     private fun editorKey(code: Int) {
         if (code == KeyEvent.KEYCODE_ESCAPE) {
-            if (addType >= 0) onCancel() else onExit()
+            if (addType >= 0) {
+                onCancel()
+            } else if (selIdx >= 0) {
+                selIdx = -1
+                redraw()
+            } else {
+                onExit()
+            }
             return
         }
-        if (addType < 0) {
-            say("Ketuk Tambah komponen dulu")
+        if (addType >= 0) {
+            say("Ketuk titik di layar dulu")
             return
         }
-        if (pts.size < needPts()) {
-            say("Ketuk layar dulu")
+        if (!validSel()) {
+            say("Ketuk komponen yang ada dulu, lalu tekan tombol")
             return
         }
-        keys.add(code)
-        if (keys.size < needKeys()) {
-            redraw()
-            return
-        }
-        commit()
+        assign(code)
     }
 
     private fun commit() {
         val c = app ?: return
         val r = KeyMapStore.real(c)
-        val ks = keys.toIntArray()
+        val nk = needKeys()
         val fp: FloatArray = when (addType) {
             KeyComp.SWIPE -> floatArrayOf(pts[0][0], pts[0][1], pts[1][0], pts[1][1])
             KeyComp.JOY -> {
@@ -412,11 +485,12 @@ object KeyRouter : EditorCtl {
             else -> floatArrayOf(pts[0][0], pts[0][1])
         }
         val l = edit()
-        l.removeAll { k -> k.keys.any { ks.contains(it) } }
-        l.add(KeyComp(addType, ks, fp))
-        markDirty()
+        l.add(KeyComp(addType, IntArray(nk), fp))
+        val last = l.size - 1
         resetFlow()
-        say("Ditambahkan. Ketuk Simpan untuk menyimpan.")
+        if (nk > 0) selIdx = last
+        markDirty()
+        say(if (nk > 0) "Ditambahkan. Pilih tombolnya, atau nanti saja." else "Ditambahkan.")
         redraw()
     }
 }
