@@ -46,6 +46,7 @@ object KeyRouter : EditorCtl {
         wm = c.getSystemService(Context.WINDOW_SERVICE) as WindowManager
         DotsOverlay.attach(c)
         syncBalls()
+        syncMouse()
     }
 
     fun syncBalls() {
@@ -57,7 +58,10 @@ object KeyRouter : EditorCtl {
         BallOverlay.show(c, runList())
     }
 
-    private fun label(code: Int) = KeyEvent.keyCodeToString(code).removePrefix("KEYCODE_")
+    fun syncMouse() {
+        val c = app ?: return
+        MouseRunner.sync(c, runList(), enabled && editor == null)
+    }
 
     private fun say(s: String) {
         val c = app ?: return
@@ -89,6 +93,7 @@ object KeyRouter : EditorCtl {
         resetFlow()
         editor?.invalidate()
         syncBalls()
+        syncMouse()
     }
 
     fun clearProfile() {
@@ -101,11 +106,13 @@ object KeyRouter : EditorCtl {
         resetFlow()
         editor?.invalidate()
         syncBalls()
+        syncMouse()
     }
 
     fun switchEnabled(v: Boolean) {
         enabled = v
         KeyRunner.releaseAll()
+        syncMouse()
     }
 
     private fun resetFlow() {
@@ -119,11 +126,11 @@ object KeyRouter : EditorCtl {
         editor?.invalidate()
     }
 
-    // ---------- tombol dari keyboard ----------
+    // ---------- tombol dari keyboard dan mouse ----------
     fun onKey(evdev: Int, isDown: Boolean) {
         val code = EvdevMap.toAndroid(evdev)
         if (code == 0) return
-        if (isDown) lastKey = label(code)
+        if (isDown) lastKey = KeyNames.label(code)
         ui.post { handle(code, isDown) }
     }
 
@@ -144,6 +151,7 @@ object KeyRouter : EditorCtl {
         }
         if (!enabled) return
         val c = app ?: return
+        MouseRunner.key(code, isDown)
         KeyRunner.press(c, runList(), code, isDown)
     }
 
@@ -174,6 +182,7 @@ object KeyRouter : EditorCtl {
         }
         w.addView(v, p)
         editor = v
+        syncMouse()
     }
 
     private fun closeEditor() {
@@ -185,16 +194,17 @@ object KeyRouter : EditorCtl {
         resetFlow()
         KeyRunner.releaseAll()
         syncBalls()
+        syncMouse()
     }
 
     private fun needPts() = when (addType) {
-        KeyComp.SWIPE, KeyComp.JOY -> 2
+        KeyComp.SWIPE, KeyComp.JOY, KeyComp.SCROLL, KeyComp.FPSV, KeyComp.FREE -> 2
         else -> 1
     }
 
     private fun needKeys() = when (addType) {
         KeyComp.JOY -> 4
-        KeyComp.BALL -> 0
+        KeyComp.BALL, KeyComp.SCROLL -> 0
         else -> 1
     }
 
@@ -233,15 +243,27 @@ object KeyRouter : EditorCtl {
                     if (pts.isEmpty()) "Ketuk titik-titik (bisa banyak), lalu ketuk Selesai titik"
                     else "${pts.size} titik. Ketuk titik lagi, atau ketuk Selesai titik"
                 KeyComp.BALL -> "Ketuk posisi bola mengambang"
+                KeyComp.SCROLL ->
+                    if (pts.isEmpty()) "Ketuk titik untuk gulir ATAS"
+                    else "Ketuk titik untuk gulir BAWAH"
+                KeyComp.FPSV, KeyComp.FREE ->
+                    if (pts.isEmpty()) "Ketuk titik PUSAT area kamera"
+                    else "Ketuk titik TEPI area kamera (menentukan jarak geser)"
+                KeyComp.PICK -> "Ketuk posisi awal kursor mouse"
                 else -> "Ketuk titik di layar"
             }
         }
         val k = selComp()
         if (k != null) {
-            if (k.keys.isEmpty()) return "Komponen dipilih. Bola tidak butuh tombol."
+            if (k.keys.isEmpty()) return "Komponen dipilih. Tidak butuh tombol."
             val sn = slotName()
             val unset = k.keys.any { it == 0 }
-            return (if (unset) "Belum ada tombol" else "Tombol terpasang") +
+            val extra = when {
+                k.type == KeyComp.FPSV && unset -> "Tanpa tombol, mode kamera selalu aktif. "
+                k.type == KeyComp.FREE && unset -> "Tanpa tombol, Lihat Bebas tidak aktif. "
+                else -> ""
+            }
+            return extra + (if (unset) "Belum ada tombol" else "Tombol terpasang") +
                 (if (sn.isNotEmpty()) " untuk $sn" else "") +
                 ". Ketuk Pilih tombol, atau tekan tombol di keyboard."
         }
@@ -347,7 +369,7 @@ object KeyRouter : EditorCtl {
         }
         k.keys[s] = code
         val nm = if (k.type == KeyComp.JOY) arrayOf("ATAS", "KIRI", "BAWAH", "KANAN")[s] + " = " else ""
-        say(nm + label(code))
+        say(nm + KeyNames.label(code))
         slot = (s + 1) % k.keys.size
         markDirty()
         redraw()
@@ -392,7 +414,7 @@ object KeyRouter : EditorCtl {
     }
 
     private fun anchors(k: KeyComp): List<FloatArray> {
-        if (k.type == KeyComp.SWIPE) {
+        if (k.type == KeyComp.SWIPE || k.type == KeyComp.SCROLL) {
             return listOf(floatArrayOf(k.pts[0], k.pts[1]), floatArrayOf(k.pts[2], k.pts[3]))
         }
         if (k.type == KeyComp.GROUP) {
@@ -467,8 +489,9 @@ object KeyRouter : EditorCtl {
         val r = KeyMapStore.real(c)
         val nk = needKeys()
         val fp: FloatArray = when (addType) {
-            KeyComp.SWIPE -> floatArrayOf(pts[0][0], pts[0][1], pts[1][0], pts[1][1])
-            KeyComp.JOY -> {
+            KeyComp.SWIPE, KeyComp.SCROLL ->
+                floatArrayOf(pts[0][0], pts[0][1], pts[1][0], pts[1][1])
+            KeyComp.JOY, KeyComp.FPSV, KeyComp.FREE -> {
                 val rad = hypot(
                     (pts[1][0] - pts[0][0]) * r[0], (pts[1][1] - pts[0][1]) * r[1]
                 ) / min(r[0], r[1])
