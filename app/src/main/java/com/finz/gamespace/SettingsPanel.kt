@@ -20,8 +20,8 @@ class SettingsPanel(
     private val kit: OverlayKit
 ) {
     private var view: View? = null
-    private val blue = 0xFF5865F2.toInt()
     private val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
+    private val soft = 0xFFD9D4FF.toInt()
 
     fun hide() {
         view?.let { try { wm.removeView(it) } catch (e: Exception) {} }
@@ -37,8 +37,11 @@ class SettingsPanel(
 
     private fun fmt(v: Int): String = String.format("%.1f", v.toFloat())
 
-    private fun section(s: String): TextView = kit.tx(s, 13f, blue, true).apply {
-        setBackgroundColor(Color.WHITE)
+    private fun section(s: String): TextView = kit.tx(s, 13f, Color.WHITE, true).apply {
+        background = GradientDrawable(
+            GradientDrawable.Orientation.LEFT_RIGHT,
+            intArrayOf(Palette.alpha(kit.accent, 200), Palette.alpha(kit.accent2, 200))
+        ).apply { cornerRadius = kit.dp(8).toFloat() }
         setPadding(kit.dp(10), kit.dp(5), kit.dp(10), kit.dp(5))
     }
 
@@ -47,13 +50,13 @@ class SettingsPanel(
         setPadding(kit.dp(14), kit.dp(8), kit.dp(14), kit.dp(8))
     }
 
-    private fun divider(): View = View(ctx).apply { setBackgroundColor(0x33FFFFFF) }
-
     private fun addDivider(body: LinearLayout) {
-        body.addView(divider(), LinearLayout.LayoutParams(MATCH, 1))
+        val v = View(ctx)
+        v.setBackgroundColor(0x22FFFFFF)
+        body.addView(v, LinearLayout.LayoutParams(MATCH, 1))
     }
 
-    private fun note(s: String): TextView = kit.tx(s, 11f, 0xFFDDE1FF.toInt()).apply {
+    private fun note(s: String): TextView = kit.tx(s, 11f, soft).apply {
         setPadding(kit.dp(14), kit.dp(6), kit.dp(14), kit.dp(6))
     }
 
@@ -76,7 +79,7 @@ class SettingsPanel(
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL
                 setColor(0x22FFFFFF)
-                setStroke(kit.dp(1), Color.WHITE)
+                setStroke(kit.dp(1), kit.accent)
             }
             setOnClickListener { action() }
         }
@@ -97,8 +100,8 @@ class SettingsPanel(
         sb.min = min
         sb.max = max
         sb.progress = now
-        sb.progressTintList = ColorStateList.valueOf(0xFFD9DCFF.toInt())
-        sb.thumbTintList = ColorStateList.valueOf(0xFFFFF1CC.toInt())
+        sb.progressTintList = ColorStateList.valueOf(kit.accent)
+        sb.thumbTintList = ColorStateList.valueOf(Color.WHITE)
         fun setVal(v: Int) {
             val x = v.coerceIn(min, max)
             sb.progress = x
@@ -113,11 +116,11 @@ class SettingsPanel(
             override fun onStartTrackingTouch(s: SeekBar?) {}
             override fun onStopTrackingTouch(s: SeekBar?) {}
         })
-        val bl = LinearLayout.LayoutParams(kit.dp(30), kit.dp(30))
-        val br = LinearLayout.LayoutParams(kit.dp(30), kit.dp(30))
-        line.addView(stepBtn("-") { setVal(sb.progress - step) }, bl)
+        line.addView(stepBtn("-") { setVal(sb.progress - step) },
+            LinearLayout.LayoutParams(kit.dp(30), kit.dp(30)))
         line.addView(sb, LinearLayout.LayoutParams(kit.dp(150), kit.WRAP))
-        line.addView(stepBtn("+") { setVal(sb.progress + step) }, br)
+        line.addView(stepBtn("+") { setVal(sb.progress + step) },
+            LinearLayout.LayoutParams(kit.dp(30), kit.dp(30)))
         col.addView(line)
         r.addView(col)
         return r
@@ -125,15 +128,15 @@ class SettingsPanel(
 
     private fun seg(items: List<String>, sel: Int, onSel: (Int) -> Unit): LinearLayout {
         val r = LinearLayout(ctx)
-        r.background = kit.box(0x40FFFFFF, 10)
+        r.background = kit.box(0x33FFFFFF, 10)
         r.setPadding(kit.dp(2), kit.dp(2), kit.dp(2), kit.dp(2))
         fun paint(s: Int) {
             for (j in 0 until r.childCount) {
                 val t = r.getChildAt(j) as TextView
                 val on = j == s
-                t.setTextColor(if (on) blue else 0xFFE6E8FF.toInt())
+                t.setTextColor(if (on) Color.WHITE else soft)
                 t.setTypeface(null, if (on) Typeface.BOLD else Typeface.NORMAL)
-                t.background = if (on) kit.box(Color.WHITE, 8) else null
+                t.background = if (on) kit.grad(8) else null
             }
         }
         for (i in items.indices) {
@@ -157,7 +160,7 @@ class SettingsPanel(
         val r = rowBox()
         val left = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
         left.addView(kit.tx(title, 14f, Color.WHITE))
-        if (desc.isNotEmpty()) left.addView(kit.tx(desc, 10f, 0xFFDDE1FF.toInt()))
+        if (desc.isNotEmpty()) left.addView(kit.tx(desc, 10f, soft))
         r.addView(left, LinearLayout.LayoutParams(0, kit.WRAP, 1f))
         r.addView(seg(items, sel, onSel))
         return r
@@ -181,10 +184,15 @@ class SettingsPanel(
         if (view != null) return
         KeyRouter.attach(ctx)
         val dm = ctx.resources.displayMetrics
-        val root = LinearLayout(ctx).apply {
-            orientation = LinearLayout.VERTICAL
-            setBackgroundColor(blue)
-        }
+        val rad = kit.dp(20).toFloat()
+        val bgd = GradientDrawable(
+            GradientDrawable.Orientation.TOP_BOTTOM,
+            intArrayOf(0xF2200F5A.toInt(), 0xF2070419.toInt())
+        )
+        bgd.cornerRadii = floatArrayOf(rad, rad, 0f, 0f, 0f, 0f, rad, rad)
+        bgd.setStroke(kit.dp(1), Palette.alpha(kit.accent, 160))
+        val root = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+        root.background = bgd
         root.addView(
             kit.tx("Pengaturan Dasar", 18f, Color.WHITE, true).apply {
                 gravity = Gravity.CENTER
@@ -228,6 +236,14 @@ class SettingsPanel(
                 else -> "Keyboard terbaca ($kc). Tombol terakhir: " + KeyRouter.lastKey
             }
             body.addView(note(ks))
+            val mc = InputBackend.mouseCount
+            val ms = when {
+                mc < 0 -> "Mencari mouse..."
+                mc == 0 -> "Mouse tidak terdeteksi"
+                else -> "Mouse terdeteksi ($mc), digenggam: " +
+                    (if (InputBackend.grabCount > 0) "ya" else "tidak")
+            }
+            body.addView(note(ms))
         }
         if (InputBackend.lastMsg.isNotEmpty()) {
             body.addView(note("Terakhir: " + InputBackend.lastMsg))
@@ -244,7 +260,6 @@ class SettingsPanel(
         addDivider(body)
 
         body.addView(section("Pengaturan Mouse"))
-        body.addView(note("Pengaturan mouse aktif setelah dukungan mouse ditambahkan."))
         body.addView(stepRow("Sensitivitas Penunjuk Mouse", 1, 20, KeyMapStore.getInt(ctx, "msens", 5), 1) {
             KeyMapStore.putInt(ctx, "msens", it)
         })
@@ -255,7 +270,10 @@ class SettingsPanel(
                 "Atur lebih rendah jika ponsel Anda berperforma rendah",
                 listOf("125hz", "250hz", "500hz", "Tanpa Batas"),
                 KeyMapStore.getInt(ctx, "mpoll", 1)
-            ) { KeyMapStore.putInt(ctx, "mpoll", it) }
+            ) {
+                KeyMapStore.putInt(ctx, "mpoll", it)
+                InputBackend.setPoll()
+            }
         )
         addDivider(body)
         body.addView(stepRow("Ukuran Penunjuk Mouse", 5, 60, KeyMapStore.getInt(ctx, "msize", 20), 1) {
@@ -275,9 +293,9 @@ class SettingsPanel(
         sv.addView(body)
         root.addView(sv, LinearLayout.LayoutParams(MATCH, 0, 1f))
 
-        val close = kit.tx("Tutup", 14f, blue, true).apply {
+        val close = kit.tx("Tutup", 14f, Color.WHITE, true).apply {
             gravity = Gravity.CENTER
-            background = kit.box(Color.WHITE, 12)
+            background = kit.grad(12)
             setPadding(kit.dp(30), kit.dp(10), kit.dp(30), kit.dp(10))
             setOnClickListener { hide() }
         }
