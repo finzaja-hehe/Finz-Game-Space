@@ -117,7 +117,7 @@ class MainActivity : AppCompatActivity() {
         vals["name"]?.text = games[i].loadLabel(packageManager).toString()
     }
 
-    private fun setTheme(i: Int) {
+    private fun chooseTheme(i: Int) {
         getSharedPreferences("gs", MODE_PRIVATE).edit().putInt("theme", i).apply()
         build(false)
     }
@@ -175,7 +175,7 @@ class MainActivity : AppCompatActivity() {
             g.shape = GradientDrawable.OVAL
             if (i == curTheme) g.setStroke(dp(2), Color.WHITE)
             dot.background = g
-            dot.setOnClickListener { setTheme(i) }
+            dot.setOnClickListener { chooseTheme(i) }
             header.addView(dot, LinearLayout.LayoutParams(dp(22), dp(22)).apply { leftMargin = dp(10) })
         }
         main.addView(header, LinearLayout.LayoutParams(MATCH, WRAP))
