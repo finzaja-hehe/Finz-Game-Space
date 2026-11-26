@@ -14,14 +14,9 @@ import android.widget.TextView
 
 class OverlayKit(private val ctx: Context) {
 
-    private val themes = intArrayOf(
-        0xFFFF7A1A.toInt(), 0xFF2D9CFF.toInt(),
-        0xFFFF3B47.toInt(), 0xFF22E58B.toInt()
-    )
-    val accent: Int
-        get() = themes[ctx.getSharedPreferences("gs", Context.MODE_PRIVATE)
-            .getInt("theme", 0).coerceIn(0, 3)]
-    val muted = 0xFF8B93A1.toInt()
+    val accent: Int get() = Palette.a(ctx)
+    val accent2: Int get() = Palette.b(ctx)
+    val muted = Palette.MUTED
     val WRAP = LinearLayout.LayoutParams.WRAP_CONTENT
 
     fun dp(v: Int) = (v * ctx.resources.displayMetrics.density).toInt()
@@ -54,10 +49,19 @@ class OverlayKit(private val ctx: Context) {
             if (strokeDp > 0) setStroke(dp(strokeDp), strokeColor)
         }
 
-    fun circleBg(on: Boolean) = GradientDrawable().apply {
-        shape = GradientDrawable.OVAL
-        setColor(if (on) accent else 0xFF1F2430.toInt())
-        setStroke(dp(1), accent)
+    fun grad(radius: Int): GradientDrawable =
+        GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT, intArrayOf(accent, accent2))
+            .apply { cornerRadius = dp(radius).toFloat() }
+
+    fun circleBg(on: Boolean): GradientDrawable {
+        val g = if (on) {
+            GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(accent, accent2))
+        } else {
+            GradientDrawable().apply { setColor(0xFF140F2E.toInt()) }
+        }
+        g.shape = GradientDrawable.OVAL
+        g.setStroke(dp(1), accent)
+        return g
     }
 
     fun slider(label: String, min: Int, max: Int, now: Int, labelDp: Int,
@@ -70,7 +74,7 @@ class OverlayKit(private val ctx: Context) {
             this.max = max
             progress = now
             progressTintList = ColorStateList.valueOf(accent)
-            thumbTintList = ColorStateList.valueOf(accent)
+            thumbTintList = ColorStateList.valueOf(Color.WHITE)
             setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(s: SeekBar?, p: Int, fromUser: Boolean) {
                     value.text = "$p"
