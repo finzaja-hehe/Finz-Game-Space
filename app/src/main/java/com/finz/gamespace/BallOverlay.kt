@@ -1,14 +1,12 @@
 package com.finz.gamespace
 
 import android.content.Context
-import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
-import android.widget.TextView
+import android.widget.FrameLayout
 import android.widget.Toast
 
 object BallOverlay {
@@ -38,22 +36,25 @@ object BallOverlay {
         wm = w
         val d = c.resources.displayMetrics.density
         val r = KeyMapStore.real(c)
-        val size = (48 * d).toInt()
+        val size = (54 * d).toInt()
+        val m = (4 * d).toInt()
         val a = KeyMapStore.getInt(c, "ballalpha", 90) / 100f
         for (k in balls) {
-            val tv = TextView(c)
-            tv.text = "F"
-            tv.gravity = Gravity.CENTER
-            tv.textSize = 16f
-            tv.typeface = Typeface.DEFAULT_BOLD
-            tv.setTextColor(Color.BLACK)
-            tv.alpha = a
+            val fl = FrameLayout(c)
             val bg = GradientDrawable()
             bg.shape = GradientDrawable.OVAL
-            bg.setColor(kit.accent)
-            tv.background = bg
-            tv.setOnClickListener { KeymapMenu.open(c, w, kit) }
-            tv.setOnLongClickListener {
+            bg.setColor(0xFF140F2E.toInt())
+            bg.setStroke((2 * d).toInt(), kit.accent)
+            fl.background = bg
+            fl.addView(
+                LogoView(c),
+                FrameLayout.LayoutParams(size - 2 * m, size - 2 * m).apply {
+                    gravity = Gravity.CENTER
+                }
+            )
+            fl.alpha = a
+            fl.setOnClickListener { KeymapMenu.open(c, w, kit) }
+            fl.setOnLongClickListener {
                 KeyRouter.switchEnabled(!KeyRouter.enabled)
                 Toast.makeText(
                     c, if (KeyRouter.enabled) "Keymap nyala" else "Keymap mati",
@@ -72,8 +73,8 @@ object BallOverlay {
             p.x = (k.pts[0] * r[0] - size / 2f).toInt()
             p.y = (k.pts[1] * r[1] - size / 2f).toInt()
             try {
-                w.addView(tv, p)
-                views.add(tv)
+                w.addView(fl, p)
+                views.add(fl)
             } catch (e: Exception) {
             }
         }
