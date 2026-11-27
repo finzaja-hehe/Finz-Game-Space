@@ -109,7 +109,9 @@ class TileButton(
         c.drawPath(path, fill)
         fill.shader = null
 
-        if (iconId >= 0) {
+        if (iconId >= 18) {
+            GameIcons.draw(c, txt, iconId, cx, cy, d(26f), Color.WHITE, d(1f))
+        } else if (iconId >= 0) {
             HudIcons.draw(c, txt, iconId, cx, cy, d(26f), Color.WHITE, d(1f))
         } else {
             txt.shader = null
@@ -221,6 +223,7 @@ class DockPanel(
     private val vTemp = kit.tx("-", 11f, Color.WHITE, true)
     private val vBat = kit.tx("-", 11f, Color.WHITE, true)
     private val vPing = kit.tx("-", 11f, Color.WHITE, true)
+    private val vFps = kit.tx("-", 11f, Color.WHITE, true)
     private val vNet = kit.tx("-", 11f, Color.WHITE, true)
     private val vSession = kit.tx("MAIN  00:00", 11f, kit.accent, true)
     private val statusTv = kit.tx("", 10f, 0xFFFFE600.toInt(), true)
@@ -276,11 +279,12 @@ class DockPanel(
 
         val stats = LinearLayout(ctx)
         stats.gravity = Gravity.CENTER_VERTICAL
-        stats.setPadding(kit.dp(6), kit.dp(6), kit.dp(6), kit.dp(6))
+        stats.setPadding(kit.dp(4), kit.dp(6), kit.dp(4), kit.dp(6))
         stats.background = kit.box(0x40140C3A, 12, Palette.alpha(kit.accent, 90), 1)
-        stats.addView(cell("RAM", vRam, 1f))
-        stats.addView(cell("SUHU", vTemp, 1.1f))
-        stats.addView(cell("BAT", vBat, 1f))
+        stats.addView(cell("FPS", vFps, 0.9f))
+        stats.addView(cell("RAM", vRam, 0.9f))
+        stats.addView(cell("SUHU", vTemp, 1f))
+        stats.addView(cell("BAT", vBat, 0.9f))
         stats.addView(cell("PING", vPing, 1.1f))
         stats.addView(cell("NET", vNet, 1.3f))
         root.addView(stats, LinearLayout.LayoutParams(-1, kit.WRAP).apply { topMargin = kit.dp(8) })
@@ -299,12 +303,12 @@ class DockPanel(
         body.addView(boost, LinearLayout.LayoutParams(-1, kit.WRAP).apply { topMargin = kit.dp(8) })
 
         val items = listOf(
-            T("dnd", "DND", 0), T("keep", "Layar On", 1), T("cross", "Crosshair", 2),
-            T("keymap", "Keymap", 3), T("shot", "Foto", 4), T("rec", "Rekam", 5),
-            T("turbo", "Turbo", 7), T("mon", "Monitor", 8), T("rot", "Rotasi", 9),
-            T("mute", "Bisu", 10), T("save", "Hemat Layar", 11), T("rest", "Istirahat", 12),
-            T("heat", "Alarm Panas", 13), T("net", "Jaringan", 14), T("disp", "Layar", 15),
-            T("side", "Sisi Dock", 16), T("app", "Aplikasi", -1, "↩"), T("off", "Matikan", 6)
+            T("dnd", "DND", 0), T("keep", "Layar On", 1), T("cross", "Crosshair", 2), T("keymap", "Keymap", 3),
+            T("shot", "Foto", 4), T("rec", "Rekam", 5), T("turbo", "Turbo", 7), T("mon", "Monitor", 8),
+            T("rot", "Rotasi", 9), T("mute", "Bisu", 10), T("save", "Hemat Layar", 11), T("rest", "Istirahat", 12),
+            T("heat", "Alarm Panas", 13), T("net", "Jaringan", 14), T("disp", "Layar", 15), T("fps", "FPS", 18),
+            T("stream", "Stream", 19), T("mstream", "Mode Stream", 20), T("sensi", "Sensi", 21), T("auto", "Auto Turbo", 22),
+            T("torch", "Senter", 23), T("side", "Sisi Dock", 16), T("app", "Aplikasi", -1, "↩"), T("off", "Matikan", 6)
         )
         var i = 0
         while (i < items.size) {
@@ -365,13 +369,14 @@ class DockPanel(
         statusTv.visibility = if (s.isEmpty()) View.GONE else View.VISIBLE
     }
 
-    fun update(ram: Int, temp: Float, bat: Int, ping: String, net: String, session: String) {
+    fun update(ram: Int, temp: Float, bat: Int, ping: String, net: String, session: String, fps: String) {
         vRam.text = "$ram%"
         vTemp.text = "%.1f°".format(temp)
         vTemp.setTextColor(if (temp >= 42f) 0xFFFF5B5B.toInt() else Color.WHITE)
         vBat.text = "$bat%"
         vBat.setTextColor(if (bat <= 15) 0xFFFF5B5B.toInt() else Color.WHITE)
         vPing.text = ping.replace(" ms", "ms")
+        vFps.text = fps
         vNet.text = net
         vSession.text = "MAIN  $session"
     }
