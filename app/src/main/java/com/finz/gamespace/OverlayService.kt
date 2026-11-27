@@ -5,26 +5,30 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.Service
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
-import android.graphics.drawable.GradientDrawable
+import android.media.AudioManager
 import android.net.Uri
+import android.os.BatteryManager
 import android.os.Build
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.os.SystemClock
+import android.os.VibrationEffect
+import android.os.Vibrator
 import android.provider.Settings
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.widget.TextView
 import android.widget.Toast
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
 import kotlin.math.abs
+import kotlin.math.min
 
 class OverlayService : Service() {
 
@@ -35,11 +39,22 @@ class OverlayService : Service() {
     private val handler = Handler(Looper.getMainLooper())
     private var bubble: View? = null
     private var bubbleLp: WindowManager.LayoutParams? = null
-    private var hud: HudPanel? = null
+    private var hud: DockPanel? = null
     private var panelLp: WindowManager.LayoutParams? = null
     private var mon: TextView? = null
     private var keepOn = false
     private var running = false
+    private val sessionStart = SystemClock.elapsedRealtime()
+    private var restMin = 0
+    private var nextRest = 0L
+    private var heatLimit = 0
+    private var lastHeat = 0L
+    private var lastLow = 0L
+    private var muteOn = false
+    private var oldVol = 0
+    private var saveOn = false
+    private var oldBright = 128
+    private var boostOn = false
 
     private val tick = object : Runnable {
         override fun run() {
@@ -51,6 +66,13 @@ class OverlayService : Service() {
                 Ping.stop()
                 running = false
             }
+        }
+    }
+
+    private val bg = object : Runnable {
+        override fun run() {
+            checkAlerts()
+            handler.postDelayed(this, 5000)
         }
     }
 
@@ -69,17 +91,31 @@ class OverlayService : Service() {
         kit = OverlayKit(this)
         act = OverlayActions(this, handler)
         cross = CrosshairPanel(this, wm, kit) { bubble?.visibility = View.VISIBLE }
+        val sp = getSharedPreferences("gs", MODE_PRIVATE)
+        restMin = sp.getInt("restmin", 0)
+        heatLimit = sp.getInt("heatlim", 0)
+        if (restMin > 0) nextRest = SystemClock.elapsedRealtime() + restMin * 60000L
         startFg()
         showBubble()
         cross.restore()
+        handler.postDelayed(bg, 5000)
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int = START_STICKY
 
     override fun onDestroy() {
         handler.removeCallbacks(tick)
+        handler.removeCallbacks(bg)
         running = false
         Ping.stop()
+        if (muteOn) {
+            try {
+                getSystemService(AudioManager::class.java)
+                    .setStreamVolume(AudioManager.STREAM_MUSIC, oldVol.coerceAtLeast(1), 0)
+            } catch (e: Exception) {
+            }
+        }
+        if (saveOn && Settings.System.canWrite(this)) act.setBrightness(oldBright)
         cross.destroy()
         hud?.let { try { wm.removeView(it.root) } catch (e: Exception) {} }
         mon?.let { try { wm.removeView(it) } catch (e: Exception) {} }
@@ -104,26 +140,92 @@ class OverlayService : Service() {
         }
     }
 
-    private fun showBubble() {
-        val size = kit.dp(46)
-        val v = kit.tx("F", 18f, Color.BLACK, true).apply {
-            gravity = Gravity.CENTER
-            alpha = 0.9f
-            background = GradientDrawable().apply {
-                shape = GradientDrawable.OVAL
-                setColor(kit.accent)
+    private fun say(s: String) = Toast.makeText(this, s, Toast.LENGTH_SHORT).show()
+
+    // ---------- peringatan ----------
+    @Suppress("DEPRECATION")
+    private fun vibrate() {
+        try {
+            val v = getSystemService(Vibrator::class.java)
+            v?.vibrate(VibrationEffect.createWaveform(longArrayOf(0, 200, 120, 200), -1))
+        } catch (e: Exception) {
+        }
+    }
+
+    private fun alert(msg: String) {
+        Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+        vibrate()
+    }
+
+    private fun charging(): Boolean {
+        val st = registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
+            ?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+        return st == BatteryManager.BATTERY_STATUS_CHARGING ||
+            st == BatteryManager.BATTERY_STATUS_FULL
+    }
+
+    private fun checkAlerts() {
+        val now = SystemClock.elapsedRealtime()
+        if (restMin > 0 && now >= nextRest) {
+            nextRest = now + restMin * 60000L
+            alert("Sudah ${(now - sessionStart) / 60000} menit bermain. Waktunya istirahat sejenak.")
+        }
+        if (heatLimit > 0) {
+            val t = act.tempC()
+            if (t >= heatLimit && now - lastHeat > 120000L) {
+                lastHeat = now
+                alert("Suhu HP %.1f°C. Istirahatkan HP supaya tidak terlalu panas.".format(t))
             }
         }
-        val p = kit.lp(size, size, kit.dp(8), kit.dp(80), Gravity.TOP or Gravity.START, keepOn)
+        val b = act.batPct()
+        if (b <= 15 && !charging() && now - lastLow > 300000L) {
+            lastLow = now
+            alert("Baterai tinggal $b%")
+        }
+    }
+
+    private fun sessionText(): String {
+        val s = (SystemClock.elapsedRealtime() - sessionStart) / 1000
+        val h = s / 3600
+        val m = (s % 3600) / 60
+        val sec = s % 60
+        return if (h > 0) "%d:%02d:%02d".format(h, m, sec) else "%02d:%02d".format(m, sec)
+    }
+
+    // ---------- bubble ----------
+    private fun snap(v: View, p: WindowManager.LayoutParams, size: Int) {
+        val r = KeyMapStore.real(this)
+        val m = kit.dp(6)
+        val target = if (p.x + size / 2 < r[0] / 2) m else r[0] - size - m
+        val from = p.x
+        p.y = p.y.coerceIn(m, r[1] - size - m)
+        Glide.run(v, 0, 200) { u ->
+            p.x = (from + (target - from) * u).toInt()
+            try { wm.updateViewLayout(v, p) } catch (e: Exception) {}
+        }
+    }
+
+    private fun showBubble() {
+        val size = kit.dp(54)
+        val m = kit.dp(4)
+        val fl = FrameLayout(this)
+        fl.background = kit.circleBg(false)
+        fl.addView(
+            LogoView(this),
+            FrameLayout.LayoutParams(size - 2 * m, size - 2 * m).apply { gravity = Gravity.CENTER }
+        )
+        fl.alpha = 0.78f
+        val p = kit.lp(size, size, kit.dp(6), kit.dp(80), Gravity.TOP or Gravity.START, keepOn)
         var sx = 0
         var sy = 0
         var tx0 = 0f
         var ty0 = 0f
         var moved = false
-        v.setOnTouchListener { _, e ->
+        fl.setOnTouchListener { _, e ->
             when (e.action) {
                 MotionEvent.ACTION_DOWN -> {
                     sx = p.x; sy = p.y; tx0 = e.rawX; ty0 = e.rawY; moved = false
+                    fl.alpha = 1f
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
@@ -132,39 +234,80 @@ class OverlayService : Service() {
                     if (abs(dx) > kit.dp(5) || abs(dy) > kit.dp(5)) moved = true
                     p.x = sx + dx
                     p.y = sy + dy
-                    wm.updateViewLayout(v, p)
+                    wm.updateViewLayout(fl, p)
                     true
                 }
                 MotionEvent.ACTION_UP -> {
-                    if (!moved) openPanel()
+                    fl.alpha = 0.78f
+                    if (!moved) openPanel() else snap(fl, p, size)
                     true
                 }
                 else -> false
             }
         }
-        wm.addView(v, p)
-        bubble = v
+        wm.addView(fl, p)
+        bubble = fl
         bubbleLp = p
     }
 
+    // ---------- dock ----------
+    private fun restLabel(): String = if (restMin > 0) "Istirahat ${restMin}m" else "Istirahat"
+
+    private fun heatLabel(): String = if (heatLimit > 0) "Panas ${heatLimit}°" else "Alarm Panas"
+
     private fun openPanel() {
+        if (hud != null) return
         cross.hidePanel(false)
         bubble?.visibility = View.GONE
-        val h = HudPanel(this, kit, act) { onAction(it) }
+        val left = KeyMapStore.getInt(this, "dockside", 0) == 1
+        val h = DockPanel(this, kit, act, left) { onAction(it) }
         h.active("dnd", act.dndOn())
         h.active("keep", keepOn)
         h.active("cross", getSharedPreferences("ch", MODE_PRIVATE).getBoolean("on", false))
         h.active("mon", mon != null)
         h.active("rec", InputBackend.recording)
+        h.active("mute", muteOn)
+        h.active("save", saveOn)
+        h.active("boost", boostOn)
+        h.active("rest", restMin > 0)
+        h.active("heat", heatLimit > 0)
+        h.setLabel("rest", restLabel())
+        h.setLabel("heat", heatLabel())
         h.active(
             "rot",
             Settings.System.getInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 1) == 1
         )
-        val w = minOf(resources.displayMetrics.widthPixels - kit.dp(16), kit.dp(400))
-        val p = kit.lp(w, kit.WRAP, 0, kit.dp(4), Gravity.TOP or Gravity.CENTER_HORIZONTAL, keepOn)
+        val dm = KeyMapStore.real(this)
+        val w = min(dm[0] - kit.dp(8), kit.dp(280))
+        val ph = dm[1] - kit.dp(12)
+        var f = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL or
+            WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+        if (keepOn) f = f or WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
+        val p = WindowManager.LayoutParams(
+            w, ph, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, f, PixelFormat.TRANSLUCENT
+        )
+        p.gravity = Gravity.TOP or (if (left) Gravity.START else Gravity.END)
+        p.x = kit.dp(4)
+        p.y = kit.dp(6)
+        h.root.setOnTouchListener { _, e ->
+            if (e.action == MotionEvent.ACTION_OUTSIDE) {
+                closePanel()
+                true
+            } else {
+                false
+            }
+        }
         wm.addView(h.root, p)
         hud = h
         panelLp = p
+        val from = (if (left) -1f else 1f) * w
+        h.root.translationX = from
+        h.root.alpha = 0f
+        Glide.run(h.root, 0, 260) { u ->
+            h.root.translationX = from * (1f - u)
+            h.root.alpha = u * h.targetAlpha
+        }
         updateStats()
         startTick()
     }
@@ -182,7 +325,7 @@ class OverlayService : Service() {
             return
         }
         hud?.setStatus("Menyambung ADB...")
-        Toast.makeText(this, "Menyambung ADB...", Toast.LENGTH_SHORT).show()
+        say("Menyambung ADB...")
         InputBackend.start(this, InputBackend.ADB) { ok, msg ->
             if (ok) {
                 hud?.setStatus("")
@@ -196,7 +339,7 @@ class OverlayService : Service() {
 
     private fun doShot() {
         withAdb {
-            Toast.makeText(this, "Mengambil foto layar...", Toast.LENGTH_SHORT).show()
+            say("Mengambil foto layar...")
             closePanel()
             handler.postDelayed({ InputBackend.shot() }, 600)
         }
@@ -211,8 +354,17 @@ class OverlayService : Service() {
         }
         withAdb {
             InputBackend.recToggle()
-            Toast.makeText(this, "Mulai merekam layar...", Toast.LENGTH_SHORT).show()
+            say("Mulai merekam layar...")
             closePanel()
+        }
+    }
+
+    private fun openSys(action: String) {
+        closePanel()
+        try {
+            startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: Exception) {
+            say("Tidak bisa membuka pengaturan itu")
         }
     }
 
@@ -224,19 +376,43 @@ class OverlayService : Service() {
                 closePanel()
                 cross.showPanel()
             }
+            "keymap" -> {
+                closePanel()
+                KeymapMenu.open(this, wm, kit)
+            }
             "shot" -> doShot()
             "rec" -> doRec()
-            "app" -> startActivity(
-                Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-            "off" -> stopSelf()
             "turbo" -> act.cleanRam()
             "mon" -> toggleMonitor()
             "rot" -> toggleRotate()
+            "mute" -> toggleMute()
+            "save" -> toggleSave()
+            "rest" -> cycleRest()
+            "heat" -> cycleHeat()
+            "boost" -> toggleBoost()
+            "net" -> openSys(
+                if (Build.VERSION.SDK_INT >= 29) Settings.Panel.ACTION_INTERNET_CONNECTIVITY
+                else Settings.ACTION_WIRELESS_SETTINGS
+            )
+            "disp" -> openSys(Settings.ACTION_DISPLAY_SETTINGS)
+            "side" -> {
+                val cur = KeyMapStore.getInt(this, "dockside", 0)
+                KeyMapStore.putInt(this, "dockside", 1 - cur)
+                closePanel()
+                openPanel()
+            }
+            "app" -> {
+                closePanel()
+                startActivity(
+                    Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                )
+            }
+            "off" -> stopSelf()
             "close" -> closePanel()
         }
     }
 
+    // ---------- fitur ----------
     private fun needWrite(): Boolean {
         if (Settings.System.canWrite(this)) return false
         Toast.makeText(this, "Izinkan ubah pengaturan sistem dulu", Toast.LENGTH_LONG).show()
@@ -258,7 +434,7 @@ class OverlayService : Service() {
         if (p == null || v == null) return
         val f = WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON
         p.flags = if (keepOn) p.flags or f else p.flags and f.inv()
-        wm.updateViewLayout(v, p)
+        try { wm.updateViewLayout(v, p) } catch (e: Exception) {}
     }
 
     private fun toggleKeep() {
@@ -266,9 +442,81 @@ class OverlayService : Service() {
         applyKeep(bubbleLp, bubble)
         applyKeep(panelLp, hud?.root)
         hud?.active("keep", keepOn)
-        Toast.makeText(
-            this, if (keepOn) "Layar tetap menyala" else "Layar normal", Toast.LENGTH_SHORT
-        ).show()
+        say(if (keepOn) "Layar tetap menyala" else "Layar normal")
+    }
+
+    private fun toggleMute() {
+        val am = getSystemService(AudioManager::class.java)
+        if (!muteOn) {
+            oldVol = am.getStreamVolume(AudioManager.STREAM_MUSIC)
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, 0, 0)
+            muteOn = true
+            say("Suara media dibisukan")
+        } else {
+            am.setStreamVolume(AudioManager.STREAM_MUSIC, oldVol.coerceAtLeast(1), 0)
+            muteOn = false
+            say("Suara media kembali")
+        }
+        hud?.active("mute", muteOn)
+    }
+
+    private fun toggleSave() {
+        if (!saveOn) {
+            if (needWrite()) return
+            oldBright = Settings.System.getInt(contentResolver, Settings.System.SCREEN_BRIGHTNESS, 128)
+            act.setBrightness(15)
+            saveOn = true
+            say("Hemat layar aktif")
+        } else {
+            act.setBrightness(oldBright)
+            saveOn = false
+            say("Kecerahan dikembalikan")
+        }
+        hud?.active("save", saveOn)
+    }
+
+    private fun cycleRest() {
+        restMin = when (restMin) {
+            0 -> 30
+            30 -> 45
+            45 -> 60
+            else -> 0
+        }
+        getSharedPreferences("gs", MODE_PRIVATE).edit().putInt("restmin", restMin).apply()
+        nextRest = SystemClock.elapsedRealtime() + restMin * 60000L
+        hud?.setLabel("rest", restLabel())
+        hud?.active("rest", restMin > 0)
+        say(if (restMin > 0) "Pengingat istirahat tiap $restMin menit" else "Pengingat istirahat mati")
+    }
+
+    private fun cycleHeat() {
+        heatLimit = when (heatLimit) {
+            0 -> 40
+            40 -> 42
+            42 -> 45
+            else -> 0
+        }
+        getSharedPreferences("gs", MODE_PRIVATE).edit().putInt("heatlim", heatLimit).apply()
+        lastHeat = 0L
+        hud?.setLabel("heat", heatLabel())
+        hud?.active("heat", heatLimit > 0)
+        say(if (heatLimit > 0) "Alarm panas di $heatLimit°C" else "Alarm panas mati")
+    }
+
+    private fun toggleBoost() {
+        if (!boostOn) {
+            boostOn = true
+            if (!act.dndOn()) hud?.active("dnd", act.toggleDnd())
+            if (!keepOn) toggleKeep()
+            act.cleanRam()
+            say("Mode Game aktif: DND, layar menyala, RAM dibersihkan")
+        } else {
+            boostOn = false
+            if (act.dndOn()) hud?.active("dnd", act.toggleDnd())
+            if (keepOn) toggleKeep()
+            say("Mode Game dimatikan")
+        }
+        hud?.active("boost", boostOn)
     }
 
     private fun toggleMonitor() {
@@ -288,8 +536,7 @@ class OverlayService : Service() {
             kit.WRAP, kit.WRAP, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             f, PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.TOP or Gravity.START
-            x = kit.dp(70)
+            gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
             y = kit.dp(4)
         }
         wm.addView(t, p)
@@ -303,12 +550,14 @@ class OverlayService : Service() {
         val ram = act.ramPct()
         val temp = act.tempC()
         val net = act.netText()
-        val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date())
-        hud?.update(ram, temp, net, time)
+        val bat = act.batPct()
+        val ping = Ping.text()
+        val ses = sessionText()
+        hud?.update(ram, temp, bat, ping, net, ses)
         hud?.active("rec", InputBackend.recording)
         mon?.text = String.format(
-            "RAM %d%%  |  %.1f°C  |  BAT %d%%  |  %s  |  CPU %s  |  %s",
-            ram, temp, act.batPct(), net, SysInfo.cpuGhz(), Ping.text()
+            "%s  |  RAM %d%%  |  %.1f°C  |  BAT %d%%  |  %s  |  %s",
+            ses, ram, temp, bat, ping, net
         )
     }
 }
