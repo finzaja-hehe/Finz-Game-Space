@@ -23,6 +23,8 @@
 
     <application
         android:name=".GameApp"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
         android:label="Finz Game Space"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
         <activity
@@ -41,24 +43,23 @@
             android:screenOrientation="sensorLandscape" />
         <activity
             android:name=".StreamActivity"
-            android:exported="true"
-            android:label="Finz Stream"
-            android:windowSoftInputMode="adjustResize">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize" />
         <activity
             android:name=".SensiActivity"
-            android:exported="true"
-            android:label="Finz Sensi"
-            android:windowSoftInputMode="adjustResize">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
+            android:exported="false"
+            android:screenOrientation="sensorLandscape"
+            android:windowSoftInputMode="adjustResize" />
+        <activity
+            android:name=".PermActivity"
+            android:exported="false"
+            android:screenOrientation="sensorLandscape" />
+        <activity
+            android:name=".MediaPickActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <activity
             android:name=".CrashActivity"
             android:exported="false"
