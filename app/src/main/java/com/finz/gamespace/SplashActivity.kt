@@ -119,7 +119,8 @@ class SplashView(ctx: Context) : View(ctx) {
         }
 
         if (flash > 0f) {
-            p.color = Palette.alpha(Color.WHITE, (flash * 210).toInt())
+            p.shader = null
+            p.color = Palette.alpha(Palette.mix(Color.WHITE, a, 0.45f), (flash * 255).toInt())
             c.drawRect(0f, 0f, w, h, p)
         }
     }
@@ -238,11 +239,16 @@ class SplashActivity : AppCompatActivity() {
         val px = clamp((t - 0.5f) / 2.3f)
         bar.progress = px * px * (3f - 2f * px)
 
-        if (t > 3f) {
-            val f = clamp((t - 3f) / 0.25f)
-            bg.flash = f
-            col.alpha = 1f - f
-            if (f >= 1f) {
+        val ex = clamp((t - 3f) / 0.8f)
+        if (ex > 0f) {
+            val e = Tween.inOut(ex)
+            val sc = 1f + 0.10f * e
+            col.scaleX = sc
+            col.scaleY = sc
+            col.alpha = 1f - e
+            bg.flash = sin(3.1415927f * ex) * 0.32f
+            if (ex >= 1f) {
+                bg.flash = 0f
                 bg.invalidate()
                 go()
                 return
@@ -257,7 +263,7 @@ class SplashActivity : AppCompatActivity() {
         gone = true
         startActivity(Intent(this, MainActivity::class.java))
         finish()
-        overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out)
+        overridePendingTransition(0, 0)
     }
 
     override fun onDestroy() {
