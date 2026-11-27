@@ -2,9 +2,16 @@ package com.finz.gamespace
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Color
+import android.graphics.ImageDecoder
 import android.graphics.PixelFormat
-import android.graphics.Typeface
+import android.graphics.drawable.AnimatedImageDrawable
+import android.graphics.drawable.GradientDrawable
+import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.view.Gravity
@@ -13,8 +20,12 @@ import android.view.WindowManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.Toast
+import android.widget.VideoView
+import java.io.File
 import kotlin.math.max
 
 object StreamLayers {
@@ -33,9 +44,13 @@ object StreamLayers {
     private var wm: WindowManager? = null
     private var editId = -1
     private var editBar: View? = null
+    private val ui = Handler(Looper.getMainLooper())
 
     @Volatile
     var liveStart = SystemClock.elapsedRealtime()
+
+    var afterEdit: (() -> Unit)? = null
+    var afterPick: (() -> Unit)? = null
 
     private val NORMAL = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
         WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
@@ -49,6 +64,12 @@ object StreamLayers {
         sync(ctx)
     }
 
+    private fun sigOf(l: Layer): String = when (l.type) {
+        Layer.WEB, Layer.LOGO -> "${l.type}|${l.text}"
+        Layer.FRAME -> "${l.type}|${l.thick}"
+        else -> "${l.type}|${l.text}|${l.size}|${l.color}|${l.thick}|${l.name}"
+    }
+
     fun sync(ctx: Context) {
         val c = ctx.applicationContext
         app = c
@@ -58,10 +79,13 @@ object StreamLayers {
         val list = StreamStore.load(c)
         val r = KeyMapStore.real(c)
         val keep = HashSet<Int>()
+        var needFps = false
         for (l in list) {
-            if (!((master && l.on) || l.id == editId)) continue
+            val show = (master && l.on) || l.id == editId
+            if (!show) continue
             keep.add(l.id)
-            val sig = "${l.type}|${l.text}|${l.size}|${l.color}"
+            if (l.type == Layer.INFO) needFps = true
+            val sig = sigOf(l)
             var h = holds[l.id]
             if (h != null && h.sig != sig) {
                 removeHold(l.id)
@@ -73,6 +97,16 @@ object StreamLayers {
         for (id in holds.keys.toList()) {
             if (!keep.contains(id)) removeHold(id)
         }
+        if (needFps && !FpsClient.on && InputBackend.ready) FpsClient.start(c) { _ -> }
+    }
+
+    private fun border(c: Context, thick: Int): GradientDrawable {
+        val d = c.resources.displayMetrics.density
+        val g = GradientDrawable()
+        g.setColor(Color.TRANSPARENT)
+        g.cornerRadius = 10 * d
+        g.setStroke(max(1, (thick * d).toInt()), Palette.a(c))
+        return g
     }
 
     private fun place(h: Hold, l: Layer, r: IntArray, c: Context) {
@@ -82,6 +116,7 @@ object StreamLayers {
         h.lp.width = max(minPx, (l.w * r[0]).toInt())
         h.lp.height = max(minPx, (l.h * r[1]).toInt())
         h.root.alpha = l.alpha / 100f
+        h.root.background = if (l.thick > 0 && (l.type == Layer.WEB || l.type == Layer.LOGO)) border(c, l.thick) else null
         if (h.root.isAttachedToWindow) {
             try { wm?.updateViewLayout(h.root, h.lp) } catch (e: Exception) {}
         }
@@ -91,13 +126,17 @@ object StreamLayers {
         val w = wm ?: return null
         val content: View = when (l.type) {
             Layer.WEB -> web(c, l)
-            Layer.TEXT -> textView(c, l)
-            Layer.MARQUEE -> MarqueeView(c, l.text, l.size, l.color)
-            Layer.TIMER -> TimerView(c, l.size, l.color)
-            else -> LogoView(c)
+            Layer.TEXT -> TextBlock(c, l.text, l.size, l.color, l.thick)
+            Layer.MARQUEE -> MarqueeView(c, l.text, l.size, l.color, l.thick)
+            Layer.TIMER -> TimerView(c, l.size, l.color, l.thick)
+            Layer.LOGO -> logo(c, l)
+            Layer.INFO -> InfoView(c, l.size, l.color, l.thick)
+            Layer.GOAL -> GoalView(c, l.text, l.size, l.color, l.thick)
+            Layer.COUNT -> CountView(c, l.id, l.name, l.text.trim().toIntOrNull() ?: 10, l.size, l.color, l.thick)
+            else -> FrameView(c, l.thick)
         }
         val root = FrameLayout(c)
-        root.addView(content, FrameLayout.LayoutParams(-1, -1))
+        root.addView(content, FrameLayout.LayoutParams(-1, -1, Gravity.CENTER))
         val lp = WindowManager.LayoutParams(
             1, 1, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, NORMAL, PixelFormat.TRANSLUCENT
         )
@@ -113,15 +152,61 @@ object StreamLayers {
         return h
     }
 
-    private fun textView(c: Context, l: Layer): View {
-        val t = TextView(c)
-        t.text = l.text
-        t.textSize = l.size.toFloat()
-        t.setTextColor(l.color)
-        t.typeface = Typeface.DEFAULT_BOLD
-        t.gravity = Gravity.CENTER_VERTICAL
-        t.setShadowLayer(4f, 0f, 0f, Color.BLACK)
-        return t
+    private fun bitmap(path: String, maxPx: Int): Bitmap? {
+        return try {
+            val o = BitmapFactory.Options()
+            o.inJustDecodeBounds = true
+            BitmapFactory.decodeFile(path, o)
+            var s = 1
+            while (o.outWidth / s > maxPx || o.outHeight / s > maxPx) s *= 2
+            val o2 = BitmapFactory.Options()
+            o2.inSampleSize = s
+            BitmapFactory.decodeFile(path, o2)
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    private fun logo(c: Context, l: Layer): View {
+        val t = l.text
+        if (t.startsWith("img:")) {
+            val path = t.substring(4)
+            val iv = ImageView(c)
+            iv.scaleType = ImageView.ScaleType.FIT_CENTER
+            val low = path.lowercase()
+            if (Build.VERSION.SDK_INT >= 28 && (low.endsWith(".gif") || low.endsWith(".webp"))) {
+                try {
+                    val dr = ImageDecoder.decodeDrawable(ImageDecoder.createSource(File(path)))
+                    iv.setImageDrawable(dr)
+                    if (dr is AnimatedImageDrawable) {
+                        dr.repeatCount = AnimatedImageDrawable.REPEAT_INFINITE
+                        dr.start()
+                    }
+                    return iv
+                } catch (e: Throwable) {
+                }
+            }
+            val bmp = bitmap(path, 1024)
+            if (bmp != null) {
+                iv.setImageBitmap(bmp)
+                return iv
+            }
+        }
+        if (t.startsWith("vid:")) {
+            val vv = VideoView(c)
+            try {
+                vv.setVideoPath(t.substring(4))
+                vv.setOnPreparedListener { mp ->
+                    mp.isLooping = true
+                    mp.setVolume(0f, 0f)
+                    vv.start()
+                }
+                vv.setOnErrorListener { _, _, _ -> true }
+                return vv
+            } catch (e: Throwable) {
+            }
+        }
+        return LogoView(c)
     }
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -160,6 +245,8 @@ object StreamLayers {
                 v.destroy()
             } catch (e: Exception) {
             }
+        } else if (v is VideoView) {
+            try { v.stopPlayback() } catch (e: Exception) {}
         }
     }
 
@@ -167,19 +254,34 @@ object StreamLayers {
         editBar?.let { try { wm?.removeView(it) } catch (e: Exception) {} }
         editBar = null
         editId = -1
+        afterEdit = null
+        afterPick = null
         for (id in holds.keys.toList()) removeHold(id)
+    }
+
+    private fun fireAfter() {
+        val cb = afterEdit
+        afterEdit = null
+        if (cb != null) ui.post { cb() }
     }
 
     // ---------- mode atur posisi dan ukuran ----------
     fun startEdit(ctx: Context, id: Int) {
         val c = ctx.applicationContext
-        if (!Settings.canDrawOverlays(c)) return
-        endEdit(false)
+        app = c
+        wm = c.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        if (!Settings.canDrawOverlays(c)) {
+            Toast.makeText(c, "Izinkan 'Tampil di atas aplikasi lain' dulu (menu Izin)", Toast.LENGTH_LONG).show()
+            fireAfter()
+            return
+        }
+        endEdit(false, true)
         editId = id
         sync(c)
         val h = holds[id]
         if (h == null) {
             editId = -1
+            fireAfter()
             return
         }
         val name = StreamStore.load(c).firstOrNull { it.id == id }?.name ?: "Layer"
@@ -195,6 +297,17 @@ object StreamLayers {
                 h.lp.width = max(minPx, h.lp.width + dx)
                 h.lp.height = max(minPx, h.lp.height + dy)
                 try { wm?.updateViewLayout(h.root, h.lp) } catch (e: Exception) {}
+            },
+            { f ->
+                val cx = h.lp.x + h.lp.width / 2f
+                val cy = h.lp.y + h.lp.height / 2f
+                val nw = max(minPx, (h.lp.width * f).toInt())
+                val nh = max(minPx, (h.lp.height * f).toInt())
+                h.lp.width = nw
+                h.lp.height = nh
+                h.lp.x = (cx - nw / 2f).toInt()
+                h.lp.y = (cy - nh / 2f).toInt()
+                try { wm?.updateViewLayout(h.root, h.lp) } catch (e: Exception) {}
             }
         )
         h.root.addView(fr, FrameLayout.LayoutParams(-1, -1))
@@ -204,7 +317,7 @@ object StreamLayers {
         showEditBar(c, name)
     }
 
-    fun endEdit(save: Boolean) {
+    fun endEdit(save: Boolean, silent: Boolean = false) {
         if (editId < 0) return
         val id = editId
         val c = app
@@ -231,6 +344,7 @@ object StreamLayers {
         editBar = null
         editId = -1
         if (c != null) sync(c)
+        if (!silent) fireAfter()
     }
 
     private fun editBtn(kit: OverlayKit, label: String, main: Boolean, action: () -> Unit): TextView {
