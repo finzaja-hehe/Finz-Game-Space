@@ -127,6 +127,7 @@ class MainActivity : AppCompatActivity() {
         cards.clear()
         vals.clear()
         val pm = packageManager
+        val kit = OverlayKit(this)
         val a = Palette.a(this)
         val b = Palette.b(this)
         val root = FrameLayout(this)
@@ -167,6 +168,28 @@ class MainActivity : AppCompatActivity() {
         titles.addView(t1)
         titles.addView(txt("Pilih Game", 24f, Color.WHITE, true))
         header.addView(titles, LinearLayout.LayoutParams(0, WRAP, 1f))
+
+        fun pill(label: String, action: () -> Unit): View {
+            val t = txt(label, 12f, Color.WHITE, true)
+            t.gravity = Gravity.CENTER
+            t.background = kit.box(0xFF140F2E.toInt(), 14, Palette.alpha(a, 200), 1)
+            t.setPadding(dp(14), dp(8), dp(14), dp(8))
+            t.setOnClickListener { action() }
+            return t
+        }
+        header.addView(
+            pill("Stream") { startActivity(Intent(this, StreamActivity::class.java)) },
+            LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = dp(8) }
+        )
+        header.addView(
+            pill("Sensi") { startActivity(Intent(this, SensiActivity::class.java)) },
+            LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = dp(8) }
+        )
+        header.addView(
+            pill("Izin") { startActivity(Intent(this, PermActivity::class.java)) },
+            LinearLayout.LayoutParams(WRAP, WRAP).apply { rightMargin = dp(10) }
+        )
+
         val curTheme = Palette.idx(this)
         for (i in 0..3) {
             val dot = View(this)
@@ -304,7 +327,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
         if (!Settings.canDrawOverlays(this)) {
-            Toast.makeText(this, "Izinkan 'Tampil di atas aplikasi lain', lalu tekan MAIN lagi",
+            Toast.makeText(this, "Izinkan 'Tampil di atas aplikasi lain' (menu Izin), lalu tekan MAIN lagi",
                 Toast.LENGTH_LONG).show()
             startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
                 Uri.parse("package:$packageName")))
