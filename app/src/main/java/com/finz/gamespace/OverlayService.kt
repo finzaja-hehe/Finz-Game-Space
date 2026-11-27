@@ -9,6 +9,8 @@ import android.content.IntentFilter
 import android.content.pm.ServiceInfo
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.hardware.camera2.CameraCharacteristics
+import android.hardware.camera2.CameraManager
 import android.media.AudioManager
 import android.net.Uri
 import android.os.BatteryManager
@@ -42,6 +44,7 @@ class OverlayService : Service() {
     private var hud: DockPanel? = null
     private var panelLp: WindowManager.LayoutParams? = null
     private var mon: TextView? = null
+    private var fpsBadge: TextView? = null
     private var keepOn = false
     private var running = false
     private val sessionStart = SystemClock.elapsedRealtime()
@@ -50,16 +53,20 @@ class OverlayService : Service() {
     private var heatLimit = 0
     private var lastHeat = 0L
     private var lastLow = 0L
+    private var autoMin = 0
+    private var nextAuto = 0L
     private var muteOn = false
     private var oldVol = 0
     private var saveOn = false
     private var oldBright = 128
     private var boostOn = false
+    private var torchOn = false
+    private var torchId: String? = null
 
     private val tick = object : Runnable {
         override fun run() {
             updateStats()
-            if (hud != null || mon != null) {
+            if (hud != null || mon != null || fpsBadge != null) {
                 Ping.start()
                 handler.postDelayed(this, 1000)
             } else {
@@ -94,10 +101,14 @@ class OverlayService : Service() {
         val sp = getSharedPreferences("gs", MODE_PRIVATE)
         restMin = sp.getInt("restmin", 0)
         heatLimit = sp.getInt("heatlim", 0)
-        if (restMin > 0) nextRest = SystemClock.elapsedRealtime() + restMin * 60000L
+        autoMin = sp.getInt("automin", 0)
+        val now = SystemClock.elapsedRealtime()
+        if (restMin > 0) nextRest = now + restMin * 60000L
+        if (autoMin > 0) nextAuto = now + autoMin * 60000L
         startFg()
         showBubble()
         cross.restore()
+        StreamLayers.sync(this)
         handler.postDelayed(bg, 5000)
     }
 
@@ -108,6 +119,11 @@ class OverlayService : Service() {
         handler.removeCallbacks(bg)
         running = false
         Ping.stop()
+        FpsClient.stop()
+        StreamLayers.destroyAll()
+        if (torchOn) {
+            try { getSystemService(CameraManager::class.java).setTorchMode(torchId ?: "0", false) } catch (e: Exception) {}
+        }
         if (muteOn) {
             try {
                 getSystemService(AudioManager::class.java)
@@ -119,6 +135,7 @@ class OverlayService : Service() {
         cross.destroy()
         hud?.let { try { wm.removeView(it.root) } catch (e: Exception) {} }
         mon?.let { try { wm.removeView(it) } catch (e: Exception) {} }
+        fpsBadge?.let { try { wm.removeView(it) } catch (e: Exception) {} }
         bubble?.let { try { wm.removeView(it) } catch (e: Exception) {} }
         super.onDestroy()
     }
@@ -169,6 +186,10 @@ class OverlayService : Service() {
         if (restMin > 0 && now >= nextRest) {
             nextRest = now + restMin * 60000L
             alert("Sudah ${(now - sessionStart) / 60000} menit bermain. Waktunya istirahat sejenak.")
+        }
+        if (autoMin > 0 && now >= nextAuto) {
+            nextAuto = now + autoMin * 60000L
+            act.cleanRam()
         }
         if (heatLimit > 0) {
             val t = act.tempC()
@@ -255,6 +276,8 @@ class OverlayService : Service() {
 
     private fun heatLabel(): String = if (heatLimit > 0) "Panas ${heatLimit}°" else "Alarm Panas"
 
+    private fun autoLabel(): String = if (autoMin > 0) "Auto ${autoMin}m" else "Auto Turbo"
+
     private fun openPanel() {
         if (hud != null) return
         cross.hidePanel(false)
@@ -265,14 +288,19 @@ class OverlayService : Service() {
         h.active("keep", keepOn)
         h.active("cross", getSharedPreferences("ch", MODE_PRIVATE).getBoolean("on", false))
         h.active("mon", mon != null)
+        h.active("fps", fpsBadge != null)
         h.active("rec", InputBackend.recording)
         h.active("mute", muteOn)
         h.active("save", saveOn)
         h.active("boost", boostOn)
+        h.active("mstream", StreamStore.master(this))
+        h.active("torch", torchOn)
         h.active("rest", restMin > 0)
         h.active("heat", heatLimit > 0)
+        h.active("auto", autoMin > 0)
         h.setLabel("rest", restLabel())
         h.setLabel("heat", heatLabel())
+        h.setLabel("auto", autoLabel())
         h.active(
             "rot",
             Settings.System.getInt(contentResolver, Settings.System.ACCELEROMETER_ROTATION, 1) == 1
@@ -389,7 +417,19 @@ class OverlayService : Service() {
             "save" -> toggleSave()
             "rest" -> cycleRest()
             "heat" -> cycleHeat()
+            "auto" -> cycleAuto()
             "boost" -> toggleBoost()
+            "fps" -> toggleFps()
+            "torch" -> toggleTorch()
+            "mstream" -> toggleStreamMode()
+            "stream" -> {
+                closePanel()
+                StreamPanel(this, wm, kit).show()
+            }
+            "sensi" -> {
+                closePanel()
+                startActivity(Intent(this, SensiActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+            }
             "net" -> openSys(
                 if (Build.VERSION.SDK_INT >= 29) Settings.Panel.ACTION_INTERNET_CONNECTIVITY
                 else Settings.ACTION_WIRELESS_SETTINGS
@@ -503,6 +543,20 @@ class OverlayService : Service() {
         say(if (heatLimit > 0) "Alarm panas di $heatLimit°C" else "Alarm panas mati")
     }
 
+    private fun cycleAuto() {
+        autoMin = when (autoMin) {
+            0 -> 5
+            5 -> 10
+            10 -> 15
+            else -> 0
+        }
+        getSharedPreferences("gs", MODE_PRIVATE).edit().putInt("automin", autoMin).apply()
+        nextAuto = SystemClock.elapsedRealtime() + autoMin * 60000L
+        hud?.setLabel("auto", autoLabel())
+        hud?.active("auto", autoMin > 0)
+        say(if (autoMin > 0) "Bersihkan RAM otomatis tiap $autoMin menit" else "Auto Turbo mati")
+    }
+
     private fun toggleBoost() {
         if (!boostOn) {
             boostOn = true
@@ -519,11 +573,102 @@ class OverlayService : Service() {
         hud?.active("boost", boostOn)
     }
 
+    private fun toggleStreamMode() {
+        val on = !StreamStore.master(this)
+        StreamLayers.setMaster(this, on)
+        if (on) {
+            if (!act.dndOn()) hud?.active("dnd", act.toggleDnd())
+            if (!keepOn) toggleKeep()
+            say(
+                if (StreamStore.load(this).isEmpty()) "Mode Stream aktif. Belum ada layer, buat di Stream Studio"
+                else "Mode Stream aktif: layer tampil, DND dan layar menyala"
+            )
+        } else {
+            if (act.dndOn()) hud?.active("dnd", act.toggleDnd())
+            if (keepOn) toggleKeep()
+            say("Mode Stream dimatikan")
+        }
+        hud?.active("mstream", on)
+    }
+
+    private fun toggleTorch() {
+        try {
+            val cm = getSystemService(CameraManager::class.java)
+            var id: String? = null
+            for (i in cm.cameraIdList) {
+                val ch = cm.getCameraCharacteristics(i)
+                val flash = ch.get(CameraCharacteristics.FLASH_INFO_AVAILABLE) == true
+                val back = ch.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_BACK
+                if (flash && back) {
+                    id = i
+                    break
+                }
+            }
+            if (id == null) {
+                say("Senter tidak ditemukan")
+                return
+            }
+            torchId = id
+            torchOn = !torchOn
+            cm.setTorchMode(id, torchOn)
+            hud?.active("torch", torchOn)
+        } catch (e: Exception) {
+            torchOn = false
+            say("Senter gagal dinyalakan")
+        }
+    }
+
+    // ---------- FPS dan monitor ----------
+    private fun syncFps() {
+        if (fpsBadge != null || mon != null) {
+            if (!FpsClient.on) FpsClient.start(this) { msg -> say(msg) }
+        } else {
+            FpsClient.stop()
+        }
+    }
+
+    private fun fpsText(): String {
+        if (!FpsClient.on) return "--"
+        val f = FpsClient.fps
+        return if (f < 0) "--" else f.toString()
+    }
+
+    private fun toggleFps() {
+        if (fpsBadge != null) {
+            fpsBadge?.let { try { wm.removeView(it) } catch (e: Exception) {} }
+            fpsBadge = null
+            hud?.active("fps", false)
+            syncFps()
+            return
+        }
+        val t = kit.tx("FPS --", 13f, Color.WHITE, true).apply {
+            background = kit.box(0xCC0B0D12.toInt(), 8)
+            setPadding(kit.dp(8), kit.dp(3), kit.dp(8), kit.dp(3))
+        }
+        val f = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+            WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+        val p = WindowManager.LayoutParams(
+            kit.WRAP, kit.WRAP, WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            f, PixelFormat.TRANSLUCENT
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = kit.dp(70)
+            y = kit.dp(4)
+        }
+        wm.addView(t, p)
+        fpsBadge = t
+        hud?.active("fps", true)
+        syncFps()
+        updateStats()
+        startTick()
+    }
+
     private fun toggleMonitor() {
         if (mon != null) {
             mon?.let { try { wm.removeView(it) } catch (e: Exception) {} }
             mon = null
             hud?.active("mon", false)
+            syncFps()
             return
         }
         val t = kit.tx("", 11f, Color.WHITE, true).apply {
@@ -542,6 +687,7 @@ class OverlayService : Service() {
         wm.addView(t, p)
         mon = t
         hud?.active("mon", true)
+        syncFps()
         updateStats()
         startTick()
     }
@@ -553,11 +699,24 @@ class OverlayService : Service() {
         val bat = act.batPct()
         val ping = Ping.text()
         val ses = sessionText()
-        hud?.update(ram, temp, bat, ping, net, ses)
+        val fs = fpsText()
+        hud?.update(ram, temp, bat, ping, net, ses, fs)
         hud?.active("rec", InputBackend.recording)
+        fpsBadge?.let {
+            it.text = "FPS $fs"
+            val n = fs.toIntOrNull()
+            it.setTextColor(
+                when {
+                    n == null -> Color.WHITE
+                    n >= 55 -> 0xFF22E58B.toInt()
+                    n >= 30 -> 0xFFFFE600.toInt()
+                    else -> 0xFFFF5B5B.toInt()
+                }
+            )
+        }
         mon?.text = String.format(
-            "%s  |  RAM %d%%  |  %.1f°C  |  BAT %d%%  |  %s  |  %s",
-            ses, ram, temp, bat, ping, net
+            "%s  |  FPS %s  |  RAM %d%%  |  %.1f°C  |  BAT %d%%  |  %s  |  %s",
+            ses, fs, ram, temp, bat, ping, net
         )
     }
 }
