@@ -21,7 +21,6 @@ import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
-import android.view.animation.DecelerateInterpolator
 import android.widget.FrameLayout
 import android.widget.HorizontalScrollView
 import android.widget.LinearLayout
@@ -90,9 +89,11 @@ class MainActivity : AppCompatActivity() {
         v.alpha = 0f
         v.translationX = dx
         v.translationY = dy
-        v.animate().alpha(1f).translationX(0f).translationY(0f)
-            .setStartDelay(delay).setDuration(420)
-            .setInterpolator(DecelerateInterpolator()).start()
+        Tween.run(v, delay, 560, { Tween.out3(it) }, { u ->
+            v.alpha = u
+            v.translationX = dx * (1f - u)
+            v.translationY = dy * (1f - u)
+        })
     }
 
     private fun stat(label: String, value: String, key: String): View {
@@ -129,7 +130,7 @@ class MainActivity : AppCompatActivity() {
         val a = Palette.a(this)
         val b = Palette.b(this)
         val root = FrameLayout(this)
-        root.addView(LobbyBg(this), FrameLayout.LayoutParams(MATCH, MATCH))
+        root.addView(LiveBg(this), FrameLayout.LayoutParams(MATCH, MATCH))
         val row = LinearLayout(this)
         row.orientation = LinearLayout.HORIZONTAL
 
@@ -239,9 +240,9 @@ class MainActivity : AppCompatActivity() {
             stat("CPU", "${Runtime.getRuntime().availableProcessors()} core", "cpu"),
             LinearLayout.LayoutParams(0, WRAP, 1f)
         )
-        val go = MainButton(this, "MAIN")
+        val go = PulseButton(this, "MAIN")
         go.setOnClickListener { launchGame() }
-        bar.addView(go, LinearLayout.LayoutParams(dp(150), dp(54)).apply { leftMargin = dp(8) })
+        bar.addView(go, LinearLayout.LayoutParams(dp(156), dp(62)).apply { leftMargin = dp(4) })
         main.addView(bar, LinearLayout.LayoutParams(MATCH, WRAP))
 
         row.addView(main, LinearLayout.LayoutParams(0, MATCH, 1f))
@@ -249,11 +250,13 @@ class MainActivity : AppCompatActivity() {
         setContentView(root)
 
         if (anim) {
-            intro(side, 0, -dp(30).toFloat(), 0f)
-            intro(header, 80, 0f, -dp(18).toFloat())
-            for (i in cards.indices) intro(cards[i], 150L + 70L * i, dp(40).toFloat(), 0f)
-            intro(add, 150L + 70L * cards.size, dp(40).toFloat(), 0f)
-            intro(bar, 300, 0f, dp(40).toFloat())
+            root.alpha = 0f
+            Tween.run(root, 0, 520, { Tween.inOut(it) }, { root.alpha = it })
+            intro(side, 80, -dp(30).toFloat(), 0f)
+            intro(header, 160, 0f, -dp(18).toFloat())
+            for (i in cards.indices) intro(cards[i], 240L + 80L * i, dp(40).toFloat(), 0f)
+            intro(add, 240L + 80L * cards.size, dp(40).toFloat(), 0f)
+            intro(bar, 400, 0f, dp(40).toFloat())
         }
     }
 
