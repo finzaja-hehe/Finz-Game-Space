@@ -98,7 +98,7 @@ object HudIcons {
                 rf.set(cx + h * 0.4f, cy - h * 0.8f, cx + h * 0.8f, cy + h * 0.8f)
                 c.drawRect(rf, p)
             }
-            else -> {
+            9 -> {
                 p.style = Paint.Style.STROKE
                 rf.set(cx - h * 0.7f, cy - h * 0.7f, cx + h * 0.7f, cy + h * 0.7f)
                 c.drawArc(rf, -40f, 280f, false, p)
@@ -116,6 +116,87 @@ object HudIcons {
                 path.close()
                 p.style = Paint.Style.FILL
                 c.drawPath(path, p)
+            }
+            10 -> {
+                p.style = Paint.Style.FILL
+                path.reset()
+                path.moveTo(cx - h * 0.9f, cy - h * 0.3f)
+                path.lineTo(cx - h * 0.45f, cy - h * 0.3f)
+                path.lineTo(cx + h * 0.05f, cy - h * 0.75f)
+                path.lineTo(cx + h * 0.05f, cy + h * 0.75f)
+                path.lineTo(cx - h * 0.45f, cy + h * 0.3f)
+                path.lineTo(cx - h * 0.9f, cy + h * 0.3f)
+                path.close()
+                c.drawPath(path, p)
+                p.style = Paint.Style.STROKE
+                c.drawLine(cx + h * 0.35f, cy - h * 0.35f, cx + h * 0.9f, cy + h * 0.35f, p)
+                c.drawLine(cx + h * 0.35f, cy + h * 0.35f, cx + h * 0.9f, cy - h * 0.35f, p)
+            }
+            11 -> {
+                val a = Path()
+                a.addCircle(cx, cy, h * 0.8f, Path.Direction.CW)
+                val b = Path()
+                b.addCircle(cx + h * 0.45f, cy - h * 0.25f, h * 0.7f, Path.Direction.CW)
+                a.op(b, Path.Op.DIFFERENCE)
+                p.style = Paint.Style.FILL
+                c.drawPath(a, p)
+            }
+            12 -> {
+                p.style = Paint.Style.STROKE
+                c.drawCircle(cx, cy + h * 0.1f, h * 0.75f, p)
+                c.drawLine(cx, cy + h * 0.1f, cx, cy - h * 0.35f, p)
+                c.drawLine(cx, cy + h * 0.1f, cx + h * 0.35f, cy + h * 0.25f, p)
+                c.drawLine(cx - h * 0.2f, cy - h * 0.85f, cx + h * 0.2f, cy - h * 0.85f, p)
+            }
+            13 -> {
+                p.style = Paint.Style.STROKE
+                rf.set(cx - h * 0.22f, cy - h * 0.9f, cx + h * 0.22f, cy + h * 0.3f)
+                c.drawRoundRect(rf, h * 0.22f, h * 0.22f, p)
+                p.style = Paint.Style.FILL
+                c.drawCircle(cx, cy + h * 0.55f, h * 0.38f, p)
+                c.drawRect(cx - h * 0.08f, cy - h * 0.3f, cx + h * 0.08f, cy + h * 0.4f, p)
+            }
+            14 -> {
+                p.style = Paint.Style.STROKE
+                val oy = cy + h * 0.6f
+                for (k in 1..3) {
+                    val r = h * 0.3f * k
+                    rf.set(cx - r, oy - r, cx + r, oy + r)
+                    c.drawArc(rf, -135f, 90f, false, p)
+                }
+                p.style = Paint.Style.FILL
+                c.drawCircle(cx, oy, h * 0.1f, p)
+            }
+            15 -> {
+                p.style = Paint.Style.STROKE
+                rf.set(cx - h * 0.9f, cy - h * 0.65f, cx + h * 0.9f, cy + h * 0.45f)
+                c.drawRoundRect(rf, h * 0.15f, h * 0.15f, p)
+                c.drawLine(cx, cy + h * 0.45f, cx, cy + h * 0.8f, p)
+                c.drawLine(cx - h * 0.4f, cy + h * 0.8f, cx + h * 0.4f, cy + h * 0.8f, p)
+            }
+            16 -> {
+                p.style = Paint.Style.STROKE
+                c.drawLine(cx - h * 0.85f, cy, cx + h * 0.85f, cy, p)
+                c.drawLine(cx - h * 0.85f, cy, cx - h * 0.5f, cy - h * 0.3f, p)
+                c.drawLine(cx - h * 0.85f, cy, cx - h * 0.5f, cy + h * 0.3f, p)
+                c.drawLine(cx + h * 0.85f, cy, cx + h * 0.5f, cy - h * 0.3f, p)
+                c.drawLine(cx + h * 0.85f, cy, cx + h * 0.5f, cy + h * 0.3f, p)
+            }
+            17 -> {
+                p.style = Paint.Style.FILL
+                path.reset()
+                path.moveTo(cx + h * 0.25f, cy - h)
+                path.lineTo(cx - h * 0.5f, cy + h * 0.15f)
+                path.lineTo(cx - h * 0.05f, cy + h * 0.15f)
+                path.lineTo(cx - h * 0.25f, cy + h)
+                path.lineTo(cx + h * 0.5f, cy - h * 0.2f)
+                path.lineTo(cx + h * 0.05f, cy - h * 0.2f)
+                path.close()
+                c.drawPath(path, p)
+            }
+            else -> {
+                p.style = Paint.Style.FILL
+                c.drawCircle(cx, cy, h * 0.3f, p)
             }
         }
         p.style = Paint.Style.FILL
