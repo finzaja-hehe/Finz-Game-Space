@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Environment
 import android.os.StatFs
+import android.provider.Settings
 import android.util.DisplayMetrics
 import android.view.WindowManager
 import kotlin.math.pow
@@ -18,7 +19,18 @@ class DevInfo(
     val freeGb: Float,
     val hz: Int,
     val inch: Float,
-    val sdk: Int
+    val sdk: Int,
+    val soc: String
+)
+
+class SensiResult(
+    val v: IntArray,
+    val tier: Int,
+    val tierName: String,
+    val mode: String,
+    val settings: List<Pair<String, String>>,
+    val brandTips: List<String>,
+    val tips: List<String>
 )
 
 object SensiGen {
@@ -32,6 +44,69 @@ object SensiGen {
         "HP cepat panas", "Jari sering terhalang"
     )
     val KEYS = arrayOf("Umum", "Red Dot", "Scope 2x", "Scope 4x", "Sniper (AWM)", "Lihat Bebas")
+    val TIERS = arrayOf("Entry / Ringan", "Menengah", "Flagship / Gaming")
+
+    private class BP(val keys: List<String>, val bias: Int, val mode: String, val tips: List<String>)
+
+    private val PROFILES = listOf(
+        BP(
+            listOf("infinix", "tecno", "itel", "transsion"), 2, "Game Mode (Smart Panel / XOS)",
+            listOf(
+                "Layar kelas entry cenderung kurang responsif di tepi layar. Geser tombol penting sedikit ke tengah.",
+                "Aktifkan Game Mode bawaan dan matikan penghemat baterai ketat untuk Free Fire dan Finz.",
+                "Pelindung layar tebal atau licin bisa mengurangi respons sentuhan."
+            )
+        ),
+        BP(
+            listOf("xiaomi", "redmi", "poco"), -1, "Game Turbo",
+            listOf(
+                "Aktifkan Game Turbo dan pilih profil performa untuk Free Fire.",
+                "Kunci aplikasi di Recent supaya tidak ditutup sistem saat bermain lama."
+            )
+        ),
+        BP(
+            listOf("samsung"), 0, "Game Booster / Game Launcher",
+            listOf(
+                "Di Game Booster pilih prioritas performa dan atur kehalusan gerakan ke tinggi.",
+                "Matikan optimalisasi baterai untuk Free Fire agar FPS stabil."
+            )
+        ),
+        BP(
+            listOf("oppo", "realme", "oneplus"), 0, "Game Space / Game Assistant",
+            listOf(
+                "Masukkan Free Fire ke Game Space dan aktifkan mode performa.",
+                "Jika tersedia, nyalakan opsi respons sentuhan di Game Space."
+            )
+        ),
+        BP(
+            listOf("vivo", "iqoo"), 0, "Ultra Game Mode / Monster Mode",
+            listOf(
+                "Aktifkan Ultra Game Mode dan atur performa ke tinggi saat main.",
+                "Blokir notifikasi selama bermain supaya sentuhan tidak terganggu."
+            )
+        ),
+        BP(
+            listOf("asus", "rog phone"), -3, "Armoury Crate / X Mode",
+            listOf(
+                "Pakai profil X Mode di Armoury Crate untuk performa maksimal.",
+                "Sensor sentuh HP gaming sangat cepat, jadi sensi sudah diturunkan sedikit."
+            )
+        ),
+        BP(
+            listOf("redmagic", "nubia", "black shark", "blackshark"), -3, "Game Space (gaming)",
+            listOf(
+                "Aktifkan mode performa tinggi bawaan HP gaming.",
+                "Sentuhan HP gaming sangat responsif, jadi sensi sudah diturunkan sedikit."
+            )
+        ),
+        BP(
+            listOf("huawei", "honor"), 0, "Game Suite / Game Mode",
+            listOf(
+                "Aktifkan Game Mode agar notifikasi dan proses latar dibatasi.",
+                "Atur performa ke mode tinggi di pengaturan baterai."
+            )
+        )
+    )
 
     @Suppress("DEPRECATION")
     fun detect(c: Context): DevInfo {
@@ -54,13 +129,52 @@ object SensiGen {
         val dm = DisplayMetrics()
         wm.defaultDisplay.getRealMetrics(dm)
         val inch = sqrt((dm.widthPixels / dm.xdpi).pow(2) + (dm.heightPixels / dm.ydpi).pow(2))
-        val brand = Build.MANUFACTURER.replaceFirstChar { it.uppercase() }
-        return DevInfo(brand, Build.MODEL, ram, st, free, hz, inch, Build.VERSION.SDK_INT)
+        val brand = Build.BRAND.replaceFirstChar { it.uppercase() }
+        val name = try {
+            Settings.Global.getString(c.contentResolver, "device_name")
+        } catch (e: Exception) {
+            null
+        }
+        val model = if (name.isNullOrBlank()) Build.MODEL else name
+        var soc = Build.HARDWARE
+        if (Build.VERSION.SDK_INT >= 31) {
+            val s = (Build.SOC_MANUFACTURER + " " + Build.SOC_MODEL).trim()
+            if (s.isNotEmpty() && !s.lowercase().contains("unknown")) soc = s
+        }
+        return DevInfo(brand, model, ram, st, free, hz, inch, Build.VERSION.SDK_INT, soc)
+    }
+
+    fun tierOf(d: DevInfo): Int {
+        val s = (d.soc + " " + Build.HARDWARE + " " + Build.BOARD).lowercase()
+        val high = listOf(
+            "snapdragon 8", "sm8", "kalama", "taro", "lahaina", "waipio", "dimensity 9",
+            "mt6985", "mt6989", "mt6983", "exynos 2", "tensor"
+        )
+        val low = listOf(
+            "helio a", "helio g3", "helio p2", "mt6765", "mt6762", "mt6761", "mt6739", "sc9863",
+            "sc9832", "t606", "t610", "t612", "t616", "t618", "sm4", "sdm4", "bengal", "trinket",
+            "msm89", "snapdragon 4"
+        )
+        if (high.any { s.contains(it) }) return 2
+        if (low.any { s.contains(it) }) return 0
+        return when {
+            d.ramGb <= 3 -> 0
+            d.ramGb <= 6 -> 1
+            d.ramGb >= 12 -> 2
+            else -> 1
+        }
+    }
+
+    private fun profileOf(d: DevInfo): BP? {
+        val s = (d.brand + " " + d.model + " " + Build.MANUFACTURER + " " + Build.BRAND).lowercase()
+        return PROFILES.firstOrNull { p -> p.keys.any { s.contains(it) } }
     }
 
     fun generate(
         d: DevInfo, style: Int, role: Int, level: Int, cs: Set<Int>, shift: Int
-    ): Pair<IntArray, List<String>> {
+    ): SensiResult {
+        val tier = tierOf(d)
+        val bp = profileOf(d)
         val base = arrayOf(
             intArrayOf(62, 60, 55, 50, 38, 60),
             intArrayOf(75, 72, 66, 60, 45, 65),
@@ -75,11 +189,12 @@ object SensiGen {
             for (i in v.indices) v[i] += n
         }
         if (d.inch >= 6.7f) all(4) else if (d.inch < 6.2f) all(-3)
-        if (d.hz >= 90) all(-3)
-        if (d.ramGb <= 3) {
-            add(0, 3)
-            add(1, 3)
+        if (d.hz >= 120) all(-5) else if (d.hz >= 90) all(-3)
+        when (tier) {
+            0 -> all(3)
+            2 -> all(-2)
         }
+        if (bp != null) all(bp.bias)
         when (level) {
             0 -> all(-8)
             2 -> all(6)
@@ -117,24 +232,44 @@ object SensiGen {
             if (v[i] > v[i - 1]) v[i] = v[i - 1]
         }
 
-        val tips = ArrayList<String>()
-        when {
-            d.ramGb <= 3 -> tips.add(
-                "Grafis: Halus, FPS: Normal/Tinggi, bayangan dan efek: Mati. RAM ${d.ramGb}GB kecil, " +
-                    "tutup aplikasi lain dan pakai Turbo sebelum main."
-            )
-            d.ramGb <= 6 -> tips.add("Grafis: Standar, FPS: Tinggi, bayangan: Mati supaya lebih stabil.")
-            else -> tips.add("Grafis: Standar sampai Ultra, FPS: Maks (layar ${d.hz}Hz).")
+        val gfx = when (tier) {
+            0 -> "Halus"
+            1 -> "Standar"
+            else -> "Ultra / Lanjutan"
         }
+        val fps = when (tier) {
+            0 -> "Tinggi (turunkan jika patah-patah)"
+            1 -> "Tinggi"
+            else -> "Ekstrem / Maks"
+        }
+        val btn = when (style) {
+            0 -> "60-70%"
+            1 -> "55-65%"
+            2 -> "50-60%"
+            else -> "45-55%"
+        }
+        val settings = ArrayList<Pair<String, String>>()
+        settings.add(Pair("Grafis", gfx))
+        settings.add(Pair("FPS", fps))
+        settings.add(Pair("Bayangan", if (tier <= 1) "Mati" else "Hidup"))
+        settings.add(Pair("Bloom dan anti-aliasing", if (tier == 0) "Mati" else "Standar"))
+        settings.add(Pair("Ukuran tombol tembak", btn))
+        settings.add(Pair("Layar HP", "${d.hz}Hz"))
+
+        val bt = ArrayList<String>()
+        if (bp != null) bt.addAll(bp.tips)
+        else bt.add("Cari fitur Game Mode atau Game Booster di pengaturan HP dan aktifkan untuk Free Fire.")
+        bt.add("Izinkan Finz Game Space tanpa batasan baterai agar overlay stabil di ${d.brand} ${d.model}.")
+
+        val tips = ArrayList<String>()
+        if (d.ramGb <= 3) tips.add("RAM ${d.ramGb}GB kecil. Tutup aplikasi lain dan pakai Turbo sebelum main.")
         if (d.freeGb < 5f) {
             tips.add("Penyimpanan bebas tinggal %.1fGB. Kosongkan minimal 5GB agar game tidak patah-patah.".format(d.freeGb))
         }
-        if (d.hz >= 90) {
-            tips.add("Layar ${d.hz}Hz: aktifkan FPS tertinggi di game. Bidikan terasa lebih cepat, jadi sensi sudah diturunkan sedikit.")
-        }
+        if (d.hz >= 90) tips.add("Layar ${d.hz}Hz: aktifkan FPS tertinggi di game. Sensi sudah diturunkan sedikit.")
         tips.add(
             when (style) {
-                0 -> "2 jari: sensi dibuat lebih rendah agar bidikan stabil. Fokus latihan geser pelan dan terkontrol."
+                0 -> "2 jari: sensi lebih rendah agar bidikan stabil. Latih geser pelan dan terkontrol."
                 1 -> "3 jari: sensi sedang agar bisa drag cepat tanpa kehilangan kendali."
                 2 -> "4 jari: sensi lebih tinggi karena gerakan bidik pendek. Atur posisi tombol agar tidak saling menutup."
                 else -> "5-6 jari: sensi tinggi. Pastikan layar bersih dan kurangi sensi jika bidikan melayang."
@@ -145,22 +280,23 @@ object SensiGen {
             1 -> tips.add("Sniper: Scope 4x dan Sniper dinaikkan agar pindah target di scope lebih cepat.")
         }
         if (cs.contains(0)) tips.add("Drag headshot susah: Red Dot dan 2x dinaikkan. Latih satu gerakan geser pendek ke kepala.")
-        if (cs.contains(1)) tips.add("Bidikan terlalu cepat: semua sensi diturunkan. Masih liar? Ketuk 'Terlalu cepat'.")
-        if (cs.contains(2)) tips.add("Bidikan terlalu lambat: semua sensi dinaikkan. Pastikan layar bersih dan pelindung layar tidak licin.")
+        if (cs.contains(1)) tips.add("Bidikan terlalu cepat: semua sensi diturunkan. Masih liar? Ketuk Terlalu cepat.")
+        if (cs.contains(2)) tips.add("Bidikan terlalu lambat: semua sensi dinaikkan. Pastikan layar bersih dan tidak licin.")
         if (cs.contains(3)) tips.add("Recoil susah: Red Dot dan 2x diturunkan agar tarikan ke bawah lebih terkontrol.")
         if (cs.contains(4)) tips.add("Sensi tidak konsisten: bersihkan layar, cek pelindung layar, dan matikan penghemat daya yang membatasi sentuhan.")
-        if (cs.contains(5)) tips.add("Lag: turunkan grafis, tutup aplikasi lain, pakai Turbo, dan pantau suhu dan FPS di overlay.")
+        if (cs.contains(5)) tips.add("Lag: turunkan grafis, tutup aplikasi lain, pakai Turbo, dan pantau FPS di overlay.")
         if (cs.contains(6)) tips.add("HP panas: nyalakan Alarm Panas, kurangi grafis dan FPS, lepas casing tebal, jangan main sambil mengisi daya.")
-        if (cs.contains(7)) tips.add("Jari terhalang: kecilkan ukuran tombol dan geser tombol tembak agar tidak menutup target.")
-        tips.add("Izinkan Finz Game Space tanpa batasan baterai agar overlay stabil di ${d.brand} ${d.model}.")
-        tips.add("Angka ini titik awal dari pola umum, bukan angka resmi Garena. Tes 3-5 menit di Training Ground lalu setel dengan tombol di bawah.")
-        return Pair(v, tips)
+        if (cs.contains(7)) tips.add("Jari terhalang: kecilkan tombol dan geser tombol tembak agar tidak menutup target.")
+        tips.add("Angka ini titik awal dari pola umum, bukan angka resmi Garena. Tes 3-5 menit di Training Ground, lalu setel dengan tombol di bawah.")
+        return SensiResult(v, tier, TIERS[tier], bp?.mode ?: "Game Mode bawaan", settings, bt, tips)
     }
 
-    fun format(d: DevInfo, v: IntArray): String {
+    fun format(d: DevInfo, r: SensiResult): String {
         val sb = StringBuilder()
         sb.append("Sensi Free Fire - ").append(d.brand).append(' ').append(d.model).append('\n')
-        for (i in v.indices) sb.append(KEYS[i]).append(": ").append(v[i]).append('\n')
+        sb.append("Kelas HP: ").append(r.tierName).append('\n')
+        for (i in r.v.indices) sb.append(KEYS[i]).append(": ").append(r.v[i]).append('\n')
+        for (s in r.settings) sb.append(s.first).append(": ").append(s.second).append('\n')
         return sb.toString()
     }
 }
