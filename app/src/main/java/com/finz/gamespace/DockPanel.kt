@@ -13,6 +13,7 @@ import android.provider.Settings
 import android.text.TextUtils
 import android.view.Gravity
 import android.view.View
+import android.view.WindowManager
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -249,7 +250,15 @@ class DockPanel(
 
     private fun tile(t: T): TileButton {
         val v = TileButton(ctx, t.i, t.l, t.g)
-        v.setOnClickListener { onAction(t.k) }
+        v.setOnClickListener {
+            if (t.k == "sensi") {
+                onAction("close")
+                val w = ctx.getSystemService(Context.WINDOW_SERVICE) as WindowManager
+                SensiPanel(ctx, w, kit).show()
+            } else {
+                onAction(t.k)
+            }
+        }
         tiles[t.k] = v
         return v
     }
