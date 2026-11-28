@@ -20,13 +20,17 @@ class CrosshairPanel(
     private val sp = ctx.getSharedPreferences("ch", Context.MODE_PRIVATE)
     private var cross: CrosshairView? = null
     private var panel: View? = null
+    private var sv: ScrollView? = null
     private val chips = ArrayList<TextView>()
     private val dark = 0xFF1F2430.toInt()
     private val MATCH = LinearLayout.LayoutParams.MATCH_PARENT
-    private val shapes = arrayOf("Titik", "Plus", "Silang", "Lingkaran", "Lingk+Titik", "Plus Penuh")
-    private val colors = intArrayOf(
-        0xFF00FF66.toInt(), 0xFFFF3B47.toInt(), 0xFFFFFFFF.toInt(), 0xFFFFE600.toInt(),
-        0xFF00E5FF.toInt(), 0xFF2D9CFF.toInt(), 0xFFFF7A1A.toInt(), 0xFFFF4FD8.toInt()
+    private val shapes = arrayOf(
+        "Titik", "Plus", "Silang", "Lingkaran", "Lingk+Titik", "Plus Penuh", "Kotak", "Plus+Titik", "Caret"
+    )
+    private val presets = arrayOf(
+        "Cyan" to 0xFF22E5FF.toInt(), "Pink" to 0xFFFF4FD8.toInt(), "Hijau" to 0xFF22E58B.toInt(),
+        "Kuning" to 0xFFFFE600.toInt(), "Ungu" to 0xFFB45CFF.toInt(), "Merah" to 0xFFFF3B47.toInt(),
+        "Biru" to 0xFF2D9CFF.toInt(), "Oranye" to 0xFFFF7A1A.toInt()
     )
 
     fun restore() {
@@ -51,7 +55,7 @@ class CrosshairPanel(
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
         return WindowManager.LayoutParams(
-            kit.dp(200), kit.dp(200), WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+            kit.dp(240), kit.dp(240), WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             f, PixelFormat.TRANSLUCENT
         ).apply { gravity = Gravity.CENTER }
     }
@@ -98,7 +102,40 @@ class CrosshairPanel(
         val v = panel ?: return
         try { wm.removeView(v) } catch (e: Exception) {}
         panel = null
+        sv = null
         if (notify) onClosed()
+    }
+
+    private fun rebuild() {
+        val y = sv?.scrollY ?: 0
+        hidePanel(false)
+        showPanel()
+        sv?.post { sv?.scrollTo(0, y) }
+    }
+
+    private fun toggle(title: String, key: String, def: Boolean): View {
+        val t = kit.tx("", 12f, Color.WHITE, true)
+        t.gravity = Gravity.CENTER
+        t.setPadding(kit.dp(10), kit.dp(9), kit.dp(10), kit.dp(9))
+        fun paint() {
+            val on = sp.getBoolean(key, def)
+            t.text = title + (if (on) ": ON" else ": OFF")
+            t.background = if (on) kit.grad(14) else kit.box(dark, 14, kit.accent, 1)
+        }
+        paint()
+        t.setOnClickListener {
+            sp.edit().putBoolean(key, !sp.getBoolean(key, def)).apply()
+            refresh()
+            paint()
+        }
+        return t
+    }
+
+    private fun neonPreset(color: Int) {
+        sp.edit().putInt("color", color).putBoolean("neon", true).putInt("neonint", 6)
+            .putInt("neoncolor", 0).putBoolean("rainbow", false).apply()
+        refresh()
+        rebuild()
     }
 
     fun showPanel() {
@@ -113,8 +150,7 @@ class CrosshairPanel(
         }
 
         val head = LinearLayout(ctx).apply { gravity = Gravity.CENTER_VERTICAL }
-        head.addView(kit.tx("CROSSHAIR", 12f, Color.WHITE, true),
-            LinearLayout.LayoutParams(0, kit.WRAP, 1f))
+        head.addView(kit.tx("CROSSHAIR", 12f, Color.WHITE, true), LinearLayout.LayoutParams(0, kit.WRAP, 1f))
         val onBtn = kit.tx("", 11f, Color.WHITE, true).apply {
             gravity = Gravity.CENTER
             setPadding(kit.dp(14), kit.dp(6), kit.dp(14), kit.dp(6))
@@ -140,6 +176,7 @@ class CrosshairPanel(
         root.addView(head)
 
         val body = LinearLayout(ctx).apply { orientation = LinearLayout.VERTICAL }
+
         body.addView(label("BENTUK"), mp(kit.WRAP, kit.WRAP, 0, 8, 0, 4))
         val sc = HorizontalScrollView(ctx).apply { isHorizontalScrollBarEnabled = false }
         val sr = LinearLayout(ctx)
@@ -159,23 +196,49 @@ class CrosshairPanel(
         body.addView(sc)
         paintChips()
 
-        body.addView(label("WARNA"), mp(kit.WRAP, kit.WRAP, 0, 10, 0, 4))
-        val cr = LinearLayout(ctx)
-        colors.forEach { col ->
-            val dot = View(ctx).apply {
-                background = kit.box(col, 13, Color.WHITE, 1)
-                setOnClickListener { put("color", col) }
-            }
-            cr.addView(dot, mp(kit.dp(26), kit.dp(26), 0, 0, 8, 0))
-        }
-        body.addView(cr)
+        body.addView(label("WARNA (32 pilihan + warna bebas)"), mp(kit.WRAP, kit.WRAP, 0, 10, 0, 2))
+        body.addView(ColorKit.picker(ctx, kit, sp.getInt("color", 0xFF00FF66.toInt())) { put("color", it) })
+
+        body.addView(label("NEON"), mp(kit.WRAP, kit.WRAP, 0, 12, 0, 4))
+        body.addView(toggle("Neon", "neon", false), mp(MATCH, kit.WRAP, 0, 0, 0, 0))
         body.addView(
-            kit.slider("Warna", 0, 360, 120, 76) {
-                put("color", Color.HSVToColor(floatArrayOf(it.toFloat(), 1f, 1f)))
+            kit.slider("Intensitas", 1, 10, sp.getInt("neonint", 5), 76) { put("neonint", it) },
+            mp(MATCH, kit.WRAP, 0, 6, 0, 0)
+        )
+        body.addView(toggle("Denyut", "pulse", false), mp(MATCH, kit.WRAP, 0, 6, 0, 0))
+        body.addView(toggle("Pelangi (warna berganti)", "rainbow", false), mp(MATCH, kit.WRAP, 0, 6, 0, 0))
+        body.addView(label("PRESET NEON (satu ketukan)"), mp(kit.WRAP, kit.WRAP, 0, 10, 0, 4))
+        val ps = HorizontalScrollView(ctx).apply { isHorizontalScrollBarEnabled = false }
+        val pr = LinearLayout(ctx)
+        for (pe in presets) {
+            val t = kit.tx(pe.first, 11f, Color.BLACK, true).apply {
+                gravity = Gravity.CENTER
+                background = kit.box(pe.second, 12)
+                setPadding(kit.dp(12), kit.dp(8), kit.dp(12), kit.dp(8))
+                setOnClickListener { neonPreset(pe.second) }
+            }
+            pr.addView(t, mp(kit.WRAP, kit.WRAP, 0, 0, 6, 0))
+        }
+        ps.addView(pr)
+        body.addView(ps)
+        body.addView(label("WARNA CAHAYA NEON (opsional)"), mp(kit.WRAP, kit.WRAP, 0, 10, 0, 2))
+        body.addView(
+            kit.tx("Samakan dengan warna utama", 12f, Color.WHITE, true).apply {
+                gravity = Gravity.CENTER
+                background = kit.box(dark, 12, acc, 1)
+                setPadding(kit.dp(10), kit.dp(8), kit.dp(10), kit.dp(8))
+                setOnClickListener {
+                    put("neoncolor", 0)
+                    rebuild()
+                }
             },
-            mp(MATCH, kit.WRAP, 0, 4, 0, 0)
+            mp(MATCH, kit.WRAP, 0, 2, 0, 0)
+        )
+        body.addView(
+            ColorKit.picker(ctx, kit, sp.getInt("neoncolor", 0), false) { put("neoncolor", it) }
         )
 
+        body.addView(label("UKURAN DAN POSISI"), mp(kit.WRAP, kit.WRAP, 0, 12, 0, 2))
         fun row(t: String, mn: Int, mx: Int, key: String, def: Int) {
             body.addView(
                 kit.slider(t, mn, mx, sp.getInt(key, def), 76) { put(key, it) },
@@ -188,24 +251,7 @@ class CrosshairPanel(
         row("Celah", 0, 20, "gap", 3)
         row("Kiri/Kanan", -100, 100, "ox", 0)
         row("Atas/Bawah", -100, 100, "oy", 0)
-
-        val ol = kit.tx("", 12f, Color.WHITE, true).apply {
-            gravity = Gravity.CENTER
-            setPadding(kit.dp(12), kit.dp(9), kit.dp(12), kit.dp(9))
-        }
-        fun paintOl() {
-            val on = sp.getBoolean("outline", true)
-            ol.text = if (on) "Garis tepi hitam: ON" else "Garis tepi hitam: OFF"
-            ol.setTextColor(if (on) Color.BLACK else Color.WHITE)
-            ol.background = kit.box(if (on) acc else dark, 14, acc, 1)
-        }
-        ol.setOnClickListener {
-            sp.edit().putBoolean("outline", !sp.getBoolean("outline", true)).apply()
-            refresh()
-            paintOl()
-        }
-        paintOl()
-        body.addView(ol, mp(MATCH, kit.WRAP, 0, 10, 0, 0))
+        body.addView(toggle("Garis tepi hitam (tanpa neon)", "outline", true), mp(MATCH, kit.WRAP, 0, 10, 0, 0))
 
         val rs = kit.tx("Reset pengaturan", 12f, kit.muted, true).apply {
             gravity = Gravity.CENTER
@@ -214,24 +260,24 @@ class CrosshairPanel(
                 val on = sp.getBoolean("on", false)
                 sp.edit().clear().putBoolean("on", on).apply()
                 refresh()
-                hidePanel(false)
-                showPanel()
+                rebuild()
             }
         }
         body.addView(rs, mp(MATCH, kit.WRAP, 0, 4, 0, 0))
 
-        val sv = ScrollView(ctx)
-        sv.addView(body)
-        root.addView(sv, LinearLayout.LayoutParams(MATCH, 0, 1f))
+        val scroll = ScrollView(ctx)
+        sv = scroll
+        scroll.addView(body)
+        root.addView(scroll, LinearLayout.LayoutParams(MATCH, 0, 1f))
 
         val p = if (land) {
             kit.lp(
-                kit.dp(300), minOf(dm.heightPixels - kit.dp(16), kit.dp(440)),
+                kit.dp(320), minOf(dm.heightPixels - kit.dp(16), kit.dp(460)),
                 kit.dp(8), 0, Gravity.END or Gravity.CENTER_VERTICAL
             )
         } else {
             kit.lp(
-                dm.widthPixels - kit.dp(16), (dm.heightPixels * 0.42f).toInt(),
+                dm.widthPixels - kit.dp(16), (dm.heightPixels * 0.5f).toInt(),
                 0, kit.dp(8), Gravity.TOP or Gravity.CENTER_HORIZONTAL
             )
         }
