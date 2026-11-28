@@ -480,7 +480,7 @@ class StreamUi(
                     rebuildKeep()
                 }, lp(0, -2, 1f).apply { rightMargin = dp(4) })
                 r.addView(btn("-1", false) {
-                    sp.edit().putInt(key, max(0, sp.getInt(key, 0) - 1)).apply()
+                    sp.edit().putInt(key, maxOf(0, sp.getInt(key, 0) - 1)).apply()
                     rebuildKeep()
                 }, lp(0, -2, 1f).apply { rightMargin = dp(4) })
                 r.addView(btn("Reset", false) {
