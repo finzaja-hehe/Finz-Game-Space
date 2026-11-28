@@ -27,6 +27,7 @@ import android.widget.Toast
 import android.widget.VideoView
 import java.io.File
 import kotlin.math.max
+import kotlin.math.sin
 
 object StreamLayers {
 
@@ -64,10 +65,19 @@ object StreamLayers {
         sync(ctx)
     }
 
+    fun bringFront(ctx: Context, id: Int) {
+        val c = ctx.applicationContext
+        app = c
+        removeHold(id)
+        sync(c)
+    }
+
     private fun sigOf(l: Layer): String = when (l.type) {
-        Layer.WEB, Layer.LOGO -> "${l.type}|${l.text}"
-        Layer.FRAME -> "${l.type}|${l.thick}"
-        else -> "${l.type}|${l.text}|${l.size}|${l.color}|${l.thick}|${l.name}"
+        Layer.WEB -> "${l.type}|${l.text}|${l.ext}|${l.anim}"
+        Layer.LOGO -> "${l.type}|${l.text}|${l.anim}"
+        Layer.FRAME -> "${l.type}|${l.thick}|${l.anim}"
+        else -> "${l.type}|${l.text}|${l.size}|${l.color}|${l.color2}|${l.thick}|${l.font}|${l.fx}|" +
+            "${l.ext}|${l.anim}|${l.name}"
     }
 
     fun sync(ctx: Context) {
@@ -116,23 +126,53 @@ object StreamLayers {
         h.lp.width = max(minPx, (l.w * r[0]).toInt())
         h.lp.height = max(minPx, (l.h * r[1]).toInt())
         h.root.alpha = l.alpha / 100f
-        h.root.background = if (l.thick > 0 && (l.type == Layer.WEB || l.type == Layer.LOGO)) border(c, l.thick) else null
+        h.root.background =
+            if (l.thick > 0 && (l.type == Layer.WEB || l.type == Layer.LOGO)) border(c, l.thick) else null
         if (h.root.isAttachedToWindow) {
             try { wm?.updateViewLayout(h.root, h.lp) } catch (e: Exception) {}
         }
     }
 
+    private fun startAnim(v: View, mode: Int) {
+        val t0 = SystemClock.uptimeMillis()
+        val dens = v.resources.displayMetrics.density
+        val r = object : Runnable {
+            override fun run() {
+                if (!v.isAttachedToWindow) return
+                val t = (SystemClock.uptimeMillis() - t0) / 1000f
+                when (mode) {
+                    1 -> v.alpha = 0.2f + 0.8f * (0.5f + 0.5f * sin(t * 5f))
+                    2 -> {
+                        val s = 1f + 0.06f * sin(t * 4f)
+                        v.scaleX = s
+                        v.scaleY = s
+                    }
+                    3 -> v.translationY = sin(t * 2f) * 6f * dens
+                    4 -> v.rotation = sin(t * 5f) * 3f
+                }
+                v.postOnAnimation(this)
+            }
+        }
+        v.post(r)
+    }
+
     private fun create(c: Context, l: Layer, sig: String): Hold? {
         val w = wm ?: return null
+        val st = l.style()
         val content: View = when (l.type) {
             Layer.WEB -> web(c, l)
-            Layer.TEXT -> TextBlock(c, l.text, l.size, l.color, l.thick)
-            Layer.MARQUEE -> MarqueeView(c, l.text, l.size, l.color, l.thick)
-            Layer.TIMER -> TimerView(c, l.size, l.color, l.thick)
+            Layer.TEXT -> TextBlock(c, l.text, st)
+            Layer.MARQUEE -> MarqueeView(c, l.text, st)
+            Layer.TIMER -> TimerView(c, st)
             Layer.LOGO -> logo(c, l)
-            Layer.INFO -> InfoView(c, l.size, l.color, l.thick)
-            Layer.GOAL -> GoalView(c, l.text, l.size, l.color, l.thick)
-            Layer.COUNT -> CountView(c, l.id, l.name, l.text.trim().toIntOrNull() ?: 10, l.size, l.color, l.thick)
+            Layer.INFO -> InfoView(c, st)
+            Layer.GOAL -> GoalView(c, l.text, st)
+            Layer.COUNT -> CountView(c, l.id, l.name, l.text.trim().toIntOrNull() ?: 10, st)
+            Layer.CLOCK -> ClockView(c, st)
+            Layer.ROTATE -> RotateView(c, l.text, l.ext, st)
+            Layer.COUNTER -> CounterView(c, l.id, l.text, st)
+            Layer.SHAPE -> ShapeView(c, l.text, l.ext, st)
+            Layer.SCENE -> SceneView(c, l.text, st)
             else -> FrameView(c, l.thick)
         }
         val root = FrameLayout(c)
@@ -149,6 +189,7 @@ object StreamLayers {
             return null
         }
         holds[l.id] = h
+        if (l.anim > 0) startAnim(content, l.anim)
         return h
     }
 
@@ -231,6 +272,17 @@ object StreamLayers {
             )
         } else {
             v.loadUrl(if (u.startsWith("http")) u else "https://$u")
+        }
+        if (l.ext > 0 && u.isNotEmpty()) {
+            val every = l.ext * 60000L
+            val r = object : Runnable {
+                override fun run() {
+                    if (!v.isAttachedToWindow) return
+                    try { v.reload() } catch (e: Exception) {}
+                    v.postDelayed(this, every)
+                }
+            }
+            v.postDelayed(r, every)
         }
         return v
     }
